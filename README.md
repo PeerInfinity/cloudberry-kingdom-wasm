@@ -4,6 +4,10 @@ Cloudberry Kingdom (Pwnee Studios, 2013) in a browser tab. It runs the game's ow
 **no art, sound, music or video**: levels, hazards and the hero are drawn as collision boxes (Pwnee's own
 placeholder mode). It uses FNA on .NET 9 browser-wasm (Mono AOT, single-threaded, WebGL 2).
 
+**Play it:** <https://peerinfinity.github.io/cloudberry-kingdom-wasm/> (about 25 MB; desktop Chrome or Firefox, keyboard).
+The page is built and deployed by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main`;
+the built game exists only in that deployment, never in this repository.
+
 **Read [`LICENSE.md`](LICENSE.md) first.** The game's files here belong to Pwnee Studios and carry no licence.
 This repository holds only the minimum the browser build needs, so that the game's code stays in one place.
 
