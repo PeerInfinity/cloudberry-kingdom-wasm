@@ -69,6 +69,17 @@ namespace CloudberryKingdom
             CanSkipVideo = true;
 #endif
 
+#if SDL2
+            // Skip gracefully when the video asset isn't shipped (handheld builds omit
+            // videos to speed up boot and save space). No .ogv -> just continue.
+            if (!System.IO.File.Exists(System.IO.Path.GetFullPath(
+                    System.IO.Path.Combine("Content", "Movies", MovieName + ".ogv"))))
+            {
+                Playing = false;
+                return;
+            }
+#endif
+
             if (Localization.CurrentLanguage != null)
                 Subtitles = Localization.GetSubtitles(MovieName);
 
@@ -102,7 +113,14 @@ namespace CloudberryKingdom
             Playing = true;
             Cleaned = false;
 
+#if SDL2
+            // FNA plays Ogg Theora directly; load the .ogv from Content/Movies instead of an XNB.
+            string _videoPath = System.IO.Path.GetFullPath(
+                System.IO.Path.Combine(Content.RootDirectory, "Movies", MovieName + ".ogv"));
+            CurrentVideo = Video.FromUriEXT(new Uri(_videoPath), Tools.GameClass.GraphicsDevice);
+#else
             CurrentVideo = Content.Load<Video>(Path.Combine("Movies", MovieName));
+#endif
 
             VPlayer = new VideoPlayer();
             VPlayer.IsLooped = false;
@@ -191,7 +209,9 @@ namespace CloudberryKingdom
             UpdateElapsedTime();
             UserInput();
 
-            if (Elapsed > Duration)
+            // FNA's raw-file Video reports Duration = TimeSpan.MaxValue (Theora has no easy duration),
+            // so rely on the player's Stopped state to detect the end of playback.
+            if (Elapsed > Duration || VPlayer.State == MediaState.Stopped)
             {
                 Playing = false;
                 return true;

@@ -26,18 +26,19 @@ namespace CloudberryKingdom
             Tools.SoundVolume.MinVal = 0;
             Tools.SoundVolume.MaxVal = 1;
             Tools.SoundVolume.Val = .7f;
+            Tools.SoundVolume.DefaultValue = .7f;
 
             Tools.MusicVolume = new WrappedFloat();
             Tools.MusicVolume.MinVal = 0;
             Tools.MusicVolume.MaxVal = 1;
             Tools.MusicVolume.Val = 1;
+            Tools.MusicVolume.DefaultValue = 1;
             Tools.MusicVolume.SetCallback = () => Tools.UpdateVolume();
             Tools.Write("Volume created");
 
-#if DEBUG || INCLUDE_EDITOR
-            Tools.SoundVolume.Val = 0;
-            Tools.MusicVolume.Val = 0;
-#endif
+            // NOTE: the original code muted volume here under "#if DEBUG || INCLUDE_EDITOR".
+            // That zero got persisted into the shared Options/save file and then bled into
+            // Release runs (volume stuck at minimum). Removed so debug builds no longer poison saves.
 
             MyGame = new CloudberryKingdomGame();
             Tools.Write("MyGame created");

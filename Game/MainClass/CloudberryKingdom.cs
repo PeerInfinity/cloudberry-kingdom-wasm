@@ -53,7 +53,13 @@ namespace CloudberryKingdom
 
         public const string VersionString = "2.0.0000";
         public const bool CodersEdition = true;
+#if HANDHELD
+        // Handhelds default to the lighter "Anders" scenery (all tilesets -> 3 simple
+        // Anders environments). This is the big perf win on the R36S (full speed).
+        public static bool AndersSwitch = true;
+#else
         public static bool AndersSwitch = false;
+#endif
         public static bool BungeeSwitch = true;
         public const bool AllowReturnToAttractScreen = false;
 
@@ -215,6 +221,9 @@ namespace CloudberryKingdom
 
 
         public static bool ForFrapsRecording = false;
+
+        // Orphaned build flag from the original XNA project ("Digital Day" event build). Normal builds: false.
+        public const bool DigitalDayBuild = false;
 
 #if DEBUG
         public static bool AlwaysGiveTutorials = true;

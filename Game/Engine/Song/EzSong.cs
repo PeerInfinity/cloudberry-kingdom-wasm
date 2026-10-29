@@ -28,8 +28,14 @@ namespace CoreEngine
 
         protected override void LoadSong(string name)
         {
+#if SDL2
+            // FNA plays Ogg Vorbis directly; load the .ogg from Content/Music instead of an XNB.
+            string full = System.IO.Path.GetFullPath(
+                System.IO.Path.Combine(Tools.GameClass.Content.RootDirectory, "Music", name + ".ogg"));
+            song = XnaMedia.Song.FromUri(name, new Uri(full));
+#else
 			song = Tools.GameClass.Content.LoadTillSuccess<XnaMedia.Song>("Music\\" + name);
-			//song = Tools.GameClass.Content.LoadTillSuccess<XnaMedia.Song>("Music\\" + "Blue_Chair^Blind_Digital.ogg");
+#endif
         }
 	}
 

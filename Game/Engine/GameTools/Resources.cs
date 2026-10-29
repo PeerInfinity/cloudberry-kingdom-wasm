@@ -332,6 +332,19 @@ namespace CloudberryKingdom
             #endif
         }
 
+        /// <summary>
+        /// Loads a shader Effect from a raw fx_2_0 bytecode file (.fxb) built by FXC,
+        /// instead of an XNB. FNA's MojoShader consumes the fx_2_0 blob directly.
+        /// This replaces Content.Load&lt;Effect&gt; so we don't need the XNA content pipeline for shaders.
+        /// </summary>
+        public static Effect LoadEffectFXB(this ContentManager Content, string Path)
+        {
+            string relative = Path.Replace('\\', System.IO.Path.DirectorySeparatorChar) + ".fxb";
+            string full = System.IO.Path.Combine(Content.RootDirectory, relative);
+            byte[] bytecode = File.ReadAllBytes(full);
+            return new Effect(Tools.GameClass.GraphicsDevice, bytecode);
+        }
+
 
         static void _LoadThread()
         {

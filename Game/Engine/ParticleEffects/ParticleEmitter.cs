@@ -59,6 +59,10 @@ namespace CloudberryKingdom.Particles
 
         void Init(int capacity)
         {
+#if HANDHELD
+            // Fewer live particles on weak handhelds -> less per-frame update/draw.
+            capacity = (int)(capacity * 0.5f);
+#endif
             TotalCapacity = capacity;
 
             Count = Index = 0;
