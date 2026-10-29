@@ -109,7 +109,8 @@ namespace CloudberryKingdom
             Tools.SongWad.PlayerControl = Tools.SongWad.DisplayInfo = true;
 
             string path = Path.Combine(Globals.ContentDirectory, "Music");
-            string[] files = Directory.GetFiles(path);
+            // Engine-only mode ships no music: songs are registered silently on first lookup (CoreSongWad.FindByName).
+            string[] files = CloudberryKingdomGame.LoadResources ? Directory.GetFiles(path) : new string[0];
 
 #if DEBUG
             if (CloudberryKingdomGame.OutputLoadingInfo)
@@ -196,7 +197,8 @@ namespace CloudberryKingdom
             Tools.PrivateSoundWad = new CoreSoundWad(4);
 
             string path = Path.Combine(Globals.ContentDirectory, "Sound");
-            string[] files = Directory.GetFiles(path);
+            // Engine-only mode ships no sounds: sounds are registered silently on first lookup (CoreSoundWad.FindByName).
+            string[] files = CloudberryKingdomGame.LoadResources ? Directory.GetFiles(path) : new string[0];
 
 #if DEBUG
             if (CloudberryKingdomGame.OutputLoadingInfo)
@@ -350,7 +352,9 @@ namespace CloudberryKingdom
         {
             var Ck = Tools.TheGame;
 
+#if !BROWSER
             Thread.CurrentThread.Priority = ThreadPriority.Lowest;
+#endif
             Tools.Write(string.Format("Load thread starts at {0}", System.DateTime.Now));
 
             Tools.Write("Start");

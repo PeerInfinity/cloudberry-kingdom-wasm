@@ -85,6 +85,9 @@ namespace CloudberryKingdom
 
         protected void KillThread(object sender, System.EventArgs e)
         {
+#if BROWSER
+            return;
+#endif
             Thread MakeThread = Thread.CurrentThread;
             if (MakeThread != null)
             {

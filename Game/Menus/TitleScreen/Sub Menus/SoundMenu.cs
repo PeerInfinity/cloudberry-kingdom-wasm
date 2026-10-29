@@ -155,6 +155,7 @@ namespace CloudberryKingdom
                 AddItem(AndersToggle);
             }
 
+#if !BROWSER
             // Full screen resolutions
             var RezText = new Text(Localization.Words.Resolution, ItemFont, CenterItems);
             SetHeaderProperties(RezText);
@@ -253,6 +254,7 @@ namespace CloudberryKingdom
 			#endif
 
             AddItem(toggle);
+#endif // !BROWSER: a tab has no display modes (an empty list threw in SetIndex) and no fullscreen switch
 #endif
 
 			// Credits

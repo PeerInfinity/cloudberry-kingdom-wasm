@@ -514,6 +514,13 @@ namespace CoreEngine
                 if (String.Compare(Sng.Name, name, StringComparison.OrdinalIgnoreCase) == 0)
                     return Sng;
 
+            if (!CloudberryKingdomGame.LoadResources)
+            {
+                // Engine-only mode: register a silent song under the requested name.
+                AddSong(name);
+                return SongList[SongList.Count - 1];
+            }
+
 #if DEBUG
             Tools.Break();
 #endif

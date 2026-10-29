@@ -453,16 +453,8 @@ namespace CloudberryKingdom.InGameObjects
 
             InteractingBob = bob;
 
-            float scale = bob.GetScale().X;
-
-            float x_pad = DoorSize.X + HitBoxPadding.X + Info.Doors.SizePadding.X + 22 + .018f * bob.Box.Current.Size.X + Math.Max(0, 36 * (scale - 1));
-            x_pad = CoreMath.Restrict(Math.Abs(bob.Core.Data.Velocity.X * 1.3f), 500, x_pad);
-            float y_pad = DoorSize.Y + HitBoxPadding.Y + Info.Doors.SizePadding.X + 50 + Math.Max(0, 80 * (scale - 1));
-
             bool InteractedWith = false;
-            if ((
-                (Math.Abs(bob.Pos.X - Pos.X) < x_pad &&
-                 Math.Abs(bob.Pos.Y - Pos.Y) < y_pad)) &&
+            if (BobInReach(bob) &&
                 (!bob.CompControl || AllowCompControl) && !Core.MyLevel.Watching && !Core.MyLevel.Replay)
             {
 				FramesSinceInteractedWith = 0;
@@ -494,6 +486,21 @@ namespace CloudberryKingdom.InGameObjects
 
             if (!InteractedWith)
                 TemporaryBlock = false;
+        }
+
+        /// <summary>
+        /// The door's reach test, as Interact uses it (factored out so the generator API's replay check can ask it).
+        /// </summary>
+        public bool BobInReach(Bob bob)
+        {
+            float scale = bob.GetScale().X;
+
+            float x_pad = DoorSize.X + HitBoxPadding.X + Info.Doors.SizePadding.X + 22 + .018f * bob.Box.Current.Size.X + Math.Max(0, 36 * (scale - 1));
+            x_pad = CoreMath.Restrict(Math.Abs(bob.Core.Data.Velocity.X * 1.3f), 500, x_pad);
+            float y_pad = DoorSize.Y + HitBoxPadding.Y + Info.Doors.SizePadding.X + 50 + Math.Max(0, 80 * (scale - 1));
+
+            return Math.Abs(bob.Pos.X - Pos.X) < x_pad &&
+                   Math.Abs(bob.Pos.Y - Pos.Y) < y_pad;
         }
 
         public void Do() { OnOpen(this); }

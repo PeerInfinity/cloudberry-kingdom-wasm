@@ -57,8 +57,8 @@ namespace CloudberryKingdom
             }
 
             MakingLevel = true;
-            Thread MakeThread = new Thread(
-                new ThreadStart(
+            // BROWSER: single-threaded wasm has no threads; the body runs from Tools.BrowserBackgroundQueue.
+            ThreadStart MakeLevelBody =
                     delegate
                     {
                         Tools.TheGame.Exiting += KillThread;
@@ -128,7 +128,11 @@ namespace CloudberryKingdom
 
                         MakingLevel = false;
                         AlwaysLoad = true;
-                    }))
+                    };
+#if BROWSER
+            Tools.BrowserBackgroundQueue.Add(() => MakeLevelBody());
+#else
+            Thread MakeThread = new Thread(MakeLevelBody)
             {
                 Name = "MakeLevelThread",
 #if WINDOWS
@@ -137,6 +141,7 @@ namespace CloudberryKingdom
             };
 
             MakeThread.Start();
+#endif
         }
 
 

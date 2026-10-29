@@ -48,6 +48,11 @@
 #endif
                         return;
                     }
+                    else if (GeneratorApi.ApiMode)
+                    {
+                        GeneratorApi.OnLoaded();
+                        return;
+                    }
                     else if (StartAsFreeplay)
                     {
                         Tools.CurGameData = CloudberryKingdomGame.TitleGameFactory();

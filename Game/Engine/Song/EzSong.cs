@@ -8,9 +8,17 @@ namespace CoreEngine
 	{
 		public XnaMedia.Song song;
 
+        /// <summary>
+        /// Duration reported by a silent (engine-only mode) song, in seconds.
+        /// </summary>
+        public const double SilentSongSeconds = 1000000;
+
         public override double Play(bool DisplayInfo)
         {
             base.Play(DisplayInfo);
+
+            if (song == null)
+                return SilentSongSeconds;
 
             try
             {
@@ -28,6 +36,9 @@ namespace CoreEngine
 
         protected override void LoadSong(string name)
         {
+            if (!CloudberryKingdomGame.LoadResources)
+                return;
+
 #if SDL2
             // FNA plays Ogg Vorbis directly; load the .ogg from Content/Music instead of an XNB.
             string full = System.IO.Path.GetFullPath(

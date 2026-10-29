@@ -112,6 +112,11 @@ namespace CloudberryKingdom
             {
                 FontTexture = Content.LoadTillSuccess<Texture2D>(Path.Combine("Fonts", name));
             }
+            else if (File.Exists(Path.Combine(Content.RootDirectory, "Fonts", name + ".png")))
+            {
+                // A placeholder glyph atlas laid out on this font's .fnt rectangles (the browser page draws one).
+                FontTexture = Content.LoadTillSuccess<Texture2D>(Path.Combine("Fonts", name));
+            }
             else
             {
                 FontTexture = Content.LoadTillSuccess<Texture2D>("White");

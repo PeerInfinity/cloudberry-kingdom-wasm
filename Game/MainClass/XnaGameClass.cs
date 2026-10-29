@@ -78,6 +78,9 @@ namespace CloudberryKingdom
         {
 			try
 			{
+#if BROWSER
+				Tools.RunBrowserBackgroundQueue();
+#endif
 				this.IsFixedTimeStep = Tools.FixedTimeStep;
 
 				MyGame.RunningSlowly = gameTime.IsRunningSlowly;

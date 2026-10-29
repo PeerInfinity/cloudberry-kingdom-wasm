@@ -33,7 +33,7 @@ namespace CoreEngine
           */
         public void Play()
         {
-            if (CoreSoundWad.SuppressSounds) return;
+            if (CoreSoundWad.SuppressSounds || sound == null) return;
 
             if (Tools.DrawCount - LastPlayedStamp <= DelayTillNextSoundCanPlay)
                 return;
@@ -53,14 +53,14 @@ namespace CoreEngine
         /// <param name="PitchModulationRange"></param>
         public void PlayModulated(float PitchModulationRange)
         {
-            if (CoreSoundWad.SuppressSounds) return;
+            if (CoreSoundWad.SuppressSounds || sound == null) return;
 
             Play(1, Tools.GlobalRnd.RndFloat(-PitchModulationRange, PitchModulationRange), 0);
         }
 
         public void Play(float volume)
         {
-            if (CoreSoundWad.SuppressSounds) return;
+            if (CoreSoundWad.SuppressSounds || sound == null) return;
             //CutOffExtra();
 
             sound.Play(volume * Tools.SoundVolume.Val * DefaultVolume, 0, 0);
@@ -70,7 +70,7 @@ namespace CoreEngine
 
         public void Play(float volume, float pitch, float pan)
         {
-            if (CoreSoundWad.SuppressSounds) return;
+            if (CoreSoundWad.SuppressSounds || sound == null) return;
             //CutOffExtra();
 
             sound.Play(volume * Tools.SoundVolume.Val * DefaultVolume, CoreMath.Restrict(-1, 1, pitch), CoreMath.Restrict(-1, 1, pan));

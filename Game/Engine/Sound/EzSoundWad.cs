@@ -34,6 +34,13 @@ namespace CoreEngine
                 if (String.Compare(Snd.Name, name, StringComparison.OrdinalIgnoreCase) == 0)
                     return Snd;
 
+            if (!CloudberryKingdomGame.LoadResources)
+            {
+                // Engine-only mode: register a silent sound under the requested name.
+                AddSound(null, name);
+                return SoundList[SoundList.Count - 1];
+            }
+
 #if DEBUG
             Tools.Break();
 #endif

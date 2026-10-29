@@ -1685,7 +1685,12 @@ namespace CloudberryKingdom.Levels
                                 {
                                     CreationError = true;
                                 }
-                                if (a != Vector2.Zero)
+                                if (ReplayProbe && a != Vector2.Zero && index < bob.MyPiece.PieceLength)
+                                {
+                                    ReplaySnaps++;
+                                    ReplayMaxDrift = Math.Max(ReplayMaxDrift, dif.Length());
+                                }
+                                if (a != Vector2.Zero && !ReplaySnapDisabled)
                                 {
                                     //bob.Core.Data.Position = a;
                                     bob.Move(a - bob.Core.Data.Position);
@@ -1697,6 +1702,12 @@ namespace CloudberryKingdom.Levels
                 }
             }
         }
+
+        /// <summary>Generator API replay check: count snaps and would-be deaths instead of acting on deaths; optionally skip the snap.</summary>
+        public static bool ReplayProbe, ReplaySnapDisabled, ReplayRunPastEnd;
+        public static int ReplaySnaps, ReplayDeaths, ReplayFirstDeathTick;
+        public static float ReplayMaxDrift;
+        public static string ReplayFirstDeathKind;
 
         void CalcObstaclsSeen()
         {
@@ -1737,7 +1748,7 @@ namespace CloudberryKingdom.Levels
                 else
                     SetToReset = true;
             }
-            if (!SetToReset && Watching && !Replay && EndOfReplay())
+            if (!SetToReset && Watching && !Replay && EndOfReplay() && !ReplayRunPastEnd)
             {
                 ReplayPaused = true;
             }

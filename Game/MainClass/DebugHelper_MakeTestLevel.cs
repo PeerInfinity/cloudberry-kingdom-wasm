@@ -1,5 +1,4 @@
-﻿#if DEBUG
-
+﻿
 using Microsoft.Xna.Framework;
 using CloudberryKingdom.Levels;
 
@@ -7,7 +6,8 @@ namespace CloudberryKingdom
 {
     partial class CloudberryKingdomGame
     {
-        void MakeEmptyLevel()
+        // Not DEBUG-only: the generator API (GeneratorApi.OnLoaded) idles on this empty level.
+        internal void MakeEmptyLevel()
         {
             Level level = new Level();
             level.MainCamera = new Camera();
@@ -25,6 +25,7 @@ namespace CloudberryKingdom
             Tools.CurGameData.MyLevel = Tools.CurLevel = level;
         }
 
+#if DEBUG
         void MakeTestLevel()
         {
             PlayerManager.Players[0].Exists = true;
@@ -258,6 +259,6 @@ namespace CloudberryKingdom
 			//p.Style.BlockFillType = StyleData._BlockFillType.Sideways;
 			//level.CurMakeData.BlocksAsIs = true;
         }
+#endif
     }
 }
-#endif

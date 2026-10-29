@@ -506,6 +506,14 @@ namespace CloudberryKingdom
 
         public static string ExceptionStr(Exception e)
         {
+#if BROWSER
+            // BROWSER: Exception.StackTrace walks the stack, which asserts in Mono's wasm unwinder
+            // (exceptions-wasm.c g_assert(!ji)). Report type + message chain, and print it.
+            var sb = new System.Text.StringBuilder();
+            for (var x = e; x != null; x = x.InnerException) sb.AppendFormat("{0}: {1}\n", x.GetType().FullName, x.Message);
+            Console.WriteLine("[ExceptionStr] " + sb);
+            return sb.ToString();
+#endif
             return string.Format("Stack trace\n\n{0}\n\n\nInner Exception\n\n{1}\n\n\nMessage\n\n{2}", e.StackTrace, e.InnerException, e.Message);
         }
 
@@ -605,8 +613,29 @@ public static string SourceTextureDirectory()
     return Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(Directory.GetCurrentDirectory()))), "Content\\Art");
 }
 
+#if BROWSER
+/// <summary>
+/// BROWSER: single-threaded wasm has no threads. Work that the game hands to a background
+/// thread is queued here and run at the start of the next Update, so the caller finishes first,
+/// as it does when the thread really starts in the background.
+/// </summary>
+public static System.Collections.Generic.List<Action> BrowserBackgroundQueue = new System.Collections.Generic.List<Action>();
+
+public static void RunBrowserBackgroundQueue()
+{
+    if (BrowserBackgroundQueue.Count == 0) return;
+    var work = BrowserBackgroundQueue.ToArray();
+    BrowserBackgroundQueue.Clear();
+    foreach (var action in work) action();
+}
+#endif
+
 public static Thread EasyThread(int affinity, string name, Action action)
 {
+#if BROWSER
+    BrowserBackgroundQueue.Add(action);
+    return null;
+#else
     Thread NewThread = new Thread(
         new ThreadStart(
             delegate
@@ -641,6 +670,7 @@ public static Thread EasyThread(int affinity, string name, Action action)
     NewThread.Start();
 
     return NewThread;
+#endif
 }
 
         public static AftermathData CurrentAftermath;

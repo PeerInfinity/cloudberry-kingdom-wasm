@@ -857,6 +857,16 @@ namespace CloudberryKingdom.Bobs
         {
             if (Dying) return;
 
+            if (CompControl && Level.ReplayProbe)
+            {
+                if (Level.ReplayDeaths++ == 0)
+                {
+                    Level.ReplayFirstDeathTick = Core.MyLevel.CurPhsxStep;
+                    Level.ReplayFirstDeathKind = DeathType.ToString() + (KillingObject == null ? "" : ":" + KillingObject.GetType().Name);
+                }
+                return;
+            }
+
             if (!ForceDeath)
             {
                 if (Immortal ||
