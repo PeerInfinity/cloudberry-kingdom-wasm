@@ -1,0 +1,88 @@
+# Builds the engine-only page with build/build.sh and deploys it to GitHub Pages.
+#
+# The built page (the .wasm and _framework/) is the game's compiled code: it lives only in the Pages deployment
+# and the run's artifact, never in the repository (see LICENSE.md). Before deploying, a headless Chromium smoke
+# test loads the page and calls the generator API; a page that does not boot is not deployed.
+name: Build and deploy the page
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # The toolchain the page is known to run on: .NET SDK 9.0.318, wasm-tools 9.0.20 (Emscripten 3.1.56, which matches
+  # the native archives build.sh downloads).
+  DOTNET_SDK_VERSION: 9.0.318
+  PLAYWRIGHT_VERSION: 1.56.0
+  SMOKE_PORT: 8765
+  SMOKE_ARGS: '{"seed":7,"difficulty":4,"hero":"Normal","length":6700,"geometry":"Right","tileset":"castle"}'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: FNA and the five submodules of FNA's that the build compiles
+        run: |
+          git submodule update --init --depth 1 external/FNA
+          git -C external/FNA submodule update --init --depth 1 lib/SDL2-CS lib/SDL3-CS lib/FAudio lib/Theorafile lib/dav1dfile
+
+      - name: .NET SDK + wasm-tools workload (pinned)
+        run: |
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o "$RUNNER_TEMP/dotnet-install.sh"
+          bash "$RUNNER_TEMP/dotnet-install.sh" --version "$DOTNET_SDK_VERSION" --install-dir "$HOME/.dotnet"
+          "$HOME/.dotnet/dotnet" workload install wasm-tools --from-rollback-file build/ci/workload-rollback.json
+          "$HOME/.dotnet/dotnet" workload list
+
+      - name: Build the page
+        run: build/build.sh --out site
+
+      - name: Smoke test (headless Chromium, generator API)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "playwright@$PLAYWRIGHT_VERSION"
+          npx playwright install --with-deps chromium
+          cd "$GITHUB_WORKSPACE"
+          python3 -m http.server "$SMOKE_PORT" --bind 127.0.0.1 --directory site > "$RUNNER_TEMP/server.log" 2>&1 &
+          NODE_PATH="$RUNNER_TEMP/pw/node_modules" node build/tools/generate.cjs "http://127.0.0.1:$SMOKE_PORT/" "$SMOKE_ARGS" "$RUNNER_TEMP/doc.json" | tee "$RUNNER_TEMP/smoke.json"
+          python3 - "$RUNNER_TEMP/smoke.json" <<'PY'
+          import json, sys
+          r = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+          assert r.get("error") is None, f"generator returned an error: {r['error']}"
+          assert r["bytes"] > 10000, f"document too small: {r['bytes']} bytes"
+          print(f"smoke OK: {r['bytes']} bytes, sha256 {r['sha256']}, ready in {r['readyMs']} ms")
+          PY
+
+      - name: Upload the Pages artifact
+        uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v6.0.0
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5.0.0
