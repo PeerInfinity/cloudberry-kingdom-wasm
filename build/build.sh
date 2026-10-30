@@ -142,11 +142,18 @@ if [ -z "$BUILD_ID" ]; then
   dirty() { git -C "$1" diff --quiet HEAD -- . 2>/dev/null || echo -dirty; }
   BUILD_ID="$(git -C "$REPO_ROOT" rev-parse HEAD)$(dirty "$REPO_ROOT")"
 fi
-python3 - "$OUT/build-info.json" "$BUILD_ID" "$API" <<'EOF'
-import json, sys
+python3 - "$OUT/build-info.json" "$BUILD_ID" "$API" "$OUT" <<'EOF'
+import json, os, sys
 info = {"build": sys.argv[2]}
 if sys.argv[3] == "1":
     info["api"] = True
+# What the page's loading bar counts: the runtime's non-JavaScript downloads (JS modules are import()ed by the runtime,
+# outside the page's counting fetch) and the Content files, uncompressed (the page counts the bytes it reads).
+out = sys.argv[4]
+fw = os.path.join(out, "_framework")
+info["downloadBytes"] = sum(os.path.getsize(os.path.join(fw, f)) for f in os.listdir(fw)
+                            if os.path.isfile(os.path.join(fw, f)) and not f.endswith(".js")) \
+    + sum(os.path.getsize(os.path.join(out, rel)) for rel in json.load(open(os.path.join(out, "content-manifest.json"))))
 open(sys.argv[1], "w").write(json.dumps(info) + "\n")
 EOF
 

@@ -50,6 +50,13 @@ work in menus too: ↑ ↓ choose, Enter confirms, Esc goes back. A finger can s
 work at once (run and jump). The Controls panel switches them Auto (touch screens only) / On / Off
 (`build/web/touch.js`).
 
+**Speed:** the game was written frame-locked (one physics step per drawn frame at a steady 60 Hz). The page keeps
+it at 60 physics steps a second instead: on a 120 Hz screen it draws every other refresh, and when a device draws
+fewer than 60 frames it runs up to 4 steps per frame (below 15 frames a second the game slows down). `?pace=raw`
+turns this off. The Controls panel's **Show FPS** (or `?fps=1`) shows the screen rate, drawn frames, physics steps
+per second (60 = full speed) and how long the game's frames take. While the page loads, it shows how much of the
+game (about 24 MB) has downloaded.
+
 This build loads no art, so where the game would draw a key's picture (the door's "Press ↑", the hints) it writes
 the key's name instead. The drawing buffer is fixed at 1280×720 (the game would otherwise size it to the screen,
 which squashes it on a phone); the page scales it to fit.

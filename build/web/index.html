@@ -23,6 +23,12 @@
     .keys dd { margin: 0; }
     .keys label { margin-right: 1em; cursor: pointer; }
     body { touch-action: manipulation; }
+    #loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; pointer-events: none; font-size: 14px; color: #ddd; }
+    #loading[hidden] { display: none; }
+    #loading .bar { width: min(320px, 70%); height: 8px; border: 1px solid #555; border-radius: 4px; overflow: hidden; }
+    #loading .bar > div { width: 0; height: 100%; background: #8ac; transition: width .2s; }
+    #fps { position: absolute; top: 4px; left: 4px; margin: 0; padding: 2px 6px; background: rgba(0, 0, 0, .6); color: #8f8; font: 11px/1.4 monospace; white-space: pre; pointer-events: none; }
+    #fps[hidden] { display: none; }
     /* On-screen controls: a layer over the stage; only the buttons take touches, the rest reaches the canvas. */
     #touch { position: absolute; inset: 0; pointer-events: none; --btn: clamp(48px, 13vmin, 80px); --gap: clamp(6px, 2vmin, 14px); }
     #touch[hidden] { display: none; }
@@ -41,6 +47,8 @@
 <body>
   <div id="stage">
     <canvas id="canvas" width="1280" height="720" tabindex="-1"></canvas>
+    <div id="loading"><div class="text">Loading…</div><div class="bar"><div></div></div></div>
+    <pre id="fps" hidden></pre>
     <div id="touch" hidden>
       <div class="cluster move">
         <div data-key="left" aria-label="Left">&larr;</div>
@@ -87,6 +95,8 @@
           <label><input type="radio" name="touch-mode" value="on"> On</label>
           <label><input type="radio" name="touch-mode" value="off"> Off</label>
         </div>
+        <h2>Display</h2>
+        <div><label><input type="checkbox" id="show-fps"> Show FPS (frame rate and game speed)</label></div>
         <h2>Where to play</h2>
         <dl>
           <dt>Free Play</dt><dd>The Arcade &rarr; Free Play</dd>

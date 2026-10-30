@@ -115,6 +115,45 @@ if (buildInfo.build) builder = builder.withEnvironmentVariable('CK_BUILD', build
 if (params.get('loop') !== 'fna') builder = builder.withEnvironmentVariable('CK_MAIN_LOOP', 'js');
 builder = builder.withEnvironmentVariable('MONO_INTERPRETER_OPTIONS', params.has('interp_opts') ? params.get('interp_opts') : '-precise');
 if (params.get('mono_log')) builder = builder.withEnvironmentVariable('MONO_LOG_LEVEL', 'debug').withEnvironmentVariable('MONO_LOG_MASK', params.get('mono_log'));
+// Loading progress: the runtime's downloads (and the Content files below) go through a fetch that counts the bytes it
+// reads, against build-info.json's downloadBytes (build.sh sums the files, uncompressed, as the page reads them).
+const loadingEl = document.getElementById('loading');
+const loadingText = loadingEl && loadingEl.querySelector('.text');
+const loadingBar = loadingEl && loadingEl.querySelector('.bar > div');
+const totalBytes = buildInfo.downloadBytes || 0;
+let loadedBytes = 0;
+const MB = 1024 * 1024;
+function showLoading(text, fraction) {
+  if (!loadingEl) return;
+  loadingText.textContent = text;
+  if (fraction !== undefined) loadingBar.style.width = `${Math.min(100, fraction * 100).toFixed(1)}%`;
+}
+function showDownload() {
+  if (totalBytes) showLoading(`Downloading the game: ${(loadedBytes / MB).toFixed(1)} of ${(totalBytes / MB).toFixed(1)} MB`, loadedBytes / totalBytes);
+  else showLoading(`Downloading the game: ${(loadedBytes / MB).toFixed(1)} MB`);
+}
+async function countingFetch(url, init) {
+  const res = await fetch(url, init);
+  if (!res.ok || !res.body) return res;
+  const reader = res.body.getReader();
+  const body = new ReadableStream({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) { controller.close(); return; }
+      loadedBytes += value.byteLength;
+      showDownload();
+      controller.enqueue(value);
+    },
+    cancel(reason) { return reader.cancel(reason); },
+  });
+  // Same status and headers (application/wasm included, which WebAssembly.instantiateStreaming needs).
+  return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+}
+// JavaScript modules are import()ed by the runtime itself (undefined = its default loading).
+const COUNTED_RESOURCE_TYPES = new Set(['dotnetwasm', 'assembly', 'pdb', 'icu', 'globalization', 'manifest', 'configuration']);
+builder = builder.withResourceLoader((type, name, defaultUri, integrity) =>
+  COUNTED_RESOURCE_TYPES.has(type) ? countingFetch(defaultUri, integrity ? { integrity } : undefined) : undefined);
+showDownload();
 const runtime = await builder.create();
 const { Module, runMain } = runtime;
 
@@ -144,7 +183,8 @@ const windowsPath = (path) => {
   return contentCase.get(absolute.replace(/\/+/g, '/').toLowerCase()) ?? path;
 };
 
-const bytes = await Promise.all(manifest.map(async (rel) => new Uint8Array(await (await fetch('./' + rel)).arrayBuffer())));
+const bytes = await Promise.all(manifest.map(async (rel) => new Uint8Array(await (await countingFetch('./' + rel)).arrayBuffer())));
+showLoading('Starting the game…', 1);
 manifest.forEach((rel, i) => {
   const slash = rel.lastIndexOf('/');
   const dir = '/' + rel.slice(0, slash);
@@ -256,14 +296,62 @@ try { FS.mkdir(SAVE_DIR); } catch { /* exists */ }
 const jsLoop = params.get('loop') !== 'fna';
 // A frame that throws out of the game is abandoned and the loop goes on; the first FRAME_ERROR_REPORT_LIMIT are logged.
 const FRAME_ERROR_REPORT_LIMIT = 20;
+// Pacing. The game is frame-locked (one physics step per drawn frame, written for a steady 60 Hz), so on its own it
+// runs slow while a phone draws fewer frames and double speed on a 120 Hz screen. The page keeps physics at 60 steps
+// a second: it skips draws when the display is faster and asks for several steps per draw when it is slower. After a
+// long stall it drops the backlog (the game slows down rather than jumping ahead). ?pace=raw: one step per frame.
+const STEP_MS = 1000 / 60;
+const STEP_TOLERANCE = 0.25;      // of a step: 60 Hz frames that arrive a little early still draw (no 0-2-0-2 stutter)
+const MAX_STEPS_PER_DRAW = 4;     // below 15 frames/s the game slows down
+const MAX_FRAME_GAP_MS = 250;     // a longer gap (a stall, a background tab) counts as this
+const rawPace = params.get('pace') === 'raw';
+
+// FPS display (Controls panel "Show FPS", or ?fps=1): screen refreshes, drawn frames and physics steps per second,
+// and the time the game's frames take.
+const SHOW_FPS_KEY = 'ck.showFps';
+const FPS_PERIOD_MS = 500;
+const fpsEl = document.getElementById('fps');
+const fpsBox = document.getElementById('show-fps');
+let showFps = params.get('fps') === '1';
+try { if (!params.has('fps')) showFps = localStorage.getItem(SHOW_FPS_KEY) === '1'; } catch (e) { /* storage blocked */ }
+function applyShowFps() { if (fpsEl) fpsEl.hidden = !showFps; if (fpsBox) fpsBox.checked = showFps; }
+if (fpsBox) fpsBox.addEventListener('change', () => {
+  showFps = fpsBox.checked; fpsBox.blur(); applyShowFps();
+  try { localStorage.setItem(SHOW_FPS_KEY, showFps ? '1' : '0'); } catch (e) { /* storage blocked */ }
+});
+applyShowFps();
+
 async function startFrameLoop() {
   const loop = (await assemblyExports()).BrowserMainLoop;
-  let frameErrors = 0;
-  const frame = () => {
-    try { loop.Frame(); } catch (e) {
-      if (frameErrors++ < FRAME_ERROR_REPORT_LIMIT) console.error(`[host] frame threw (#${frameErrors}): ${e && e.message || e}`);
-    }
+  let frameErrors = 0, last = null, owed = 0;
+  let periodStart = performance.now(), refreshes = 0, draws = 0, costMs = 0, worstMs = 0, physics0 = loop.PhysicsCount();
+  const frame = (now) => {
     requestAnimationFrame(frame);
+    refreshes++;
+    let steps = 1;
+    if (!rawPace) {
+      owed += last === null ? STEP_MS : Math.min(now - last, MAX_FRAME_GAP_MS);
+      steps = Math.floor(owed / STEP_MS + STEP_TOLERANCE);
+      if (steps > MAX_STEPS_PER_DRAW) { steps = MAX_STEPS_PER_DRAW; owed = 0; } else owed -= steps * STEP_MS;
+    }
+    last = now;
+    if (steps > 0) {
+      const t = performance.now();
+      try { loop.FrameSteps(steps); } catch (e) {
+        if (frameErrors++ < FRAME_ERROR_REPORT_LIMIT) console.error(`[host] frame threw (#${frameErrors}): ${e && e.message || e}`);
+      }
+      const dt = performance.now() - t;
+      draws++; costMs += dt; worstMs = Math.max(worstMs, dt);
+      if (loadingEl && !loadingEl.hidden) loadingEl.hidden = true;
+    }
+    if (now - periodStart >= FPS_PERIOD_MS) {
+      const secs = (now - periodStart) / 1000, physics = loop.PhysicsCount();
+      if (showFps && fpsEl) {
+        fpsEl.textContent = `screen ${Math.round(refreshes / secs)} Hz · drawn ${Math.round(draws / secs)}/s · physics ${Math.round((physics - physics0) / secs)}/s (60 = full speed)\n`
+          + `frame ${draws ? (costMs / draws).toFixed(1) : '-'} ms avg, ${worstMs.toFixed(0)} ms worst${rawPace ? ' · pace=raw' : ''}`;
+      }
+      periodStart = now; refreshes = draws = 0; costMs = worstMs = 0; physics0 = physics;
+    }
   };
   requestAnimationFrame(frame);
 }
@@ -286,6 +374,7 @@ if (apiMode) {
   // With FNA's loop Main never returns here; with the page loop it returns and the frames start.
   runMain().then(() => { console.log('[host] Main returned'); if (jsLoop) return startFrameLoop(); }, (e) => console.log('[host] Main: ' + (e && e.message || e)));
 } else {
+  if (!jsLoop && loadingEl) loadingEl.hidden = true;   // FNA's loop never returns from Main
   await runMain();
   console.log('[host] Main returned');
   if (jsLoop) await startFrameLoop();
