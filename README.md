@@ -45,7 +45,7 @@ In a level: ←/→ or A/D run, ↑ or W jump, ↓ or S duck, ↑ or W at the ex
 respawn, Enter the power-up menu, Esc or Backspace pause. Free Play is inside The Arcade. The page's
 collapsible Controls panel lists the same keys.
 
-**Touch screens:** on-screen buttons (← ↓ →, a big ↑ for jump, and Esc / Space / Enter) press the same keys, so they
+**Touch screens:** on-screen buttons (← → on the left; ↓ ↑ (jump) and Esc / Space / Enter on the right) press the same keys, so they
 work in menus too: ↑ ↓ choose, Enter confirms, Esc goes back. A finger can slide between buttons, and two fingers
 work at once (run and jump). The Controls panel switches them Auto (touch screens only) / On / Off
 (`build/web/touch.js`).

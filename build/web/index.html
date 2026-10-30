@@ -31,11 +31,10 @@
     #touch .act { right: calc(var(--gap) + env(safe-area-inset-right, 0px)); flex-direction: column; align-items: flex-end; }
     #touch .row { display: flex; gap: var(--gap); }
     #touch [data-key] { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
-      width: var(--btn); height: var(--btn); border-radius: 50%; border: 2px solid rgba(255, 255, 255, .45); background: rgba(40, 40, 40, .55);
+      width: calc(var(--btn) * 1.35); height: calc(var(--btn) * 1.35); border-radius: 50%; border: 2px solid rgba(255, 255, 255, .45); background: rgba(40, 40, 40, .55);
       color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; font: bold calc(var(--btn) * .4) sans-serif; }
     #touch [data-key].small { width: calc(var(--btn) * .8); height: calc(var(--btn) * .62); border-radius: 12px; font-size: calc(var(--btn) * .19); }
     #touch [data-key].small small { font-weight: normal; font-size: .85em; opacity: .8; }
-    #touch [data-key].big { width: calc(var(--btn) * 1.35); height: calc(var(--btn) * 1.35); }
     #touch [data-key].down { background: rgba(255, 255, 255, .45); color: #000; }
   </style>
 </head>
@@ -45,7 +44,6 @@
     <div id="touch" hidden>
       <div class="cluster move">
         <div data-key="left" aria-label="Left">&larr;</div>
-        <div data-key="down" aria-label="Down">&darr;</div>
         <div data-key="right" aria-label="Right">&rarr;</div>
       </div>
       <div class="cluster act">
@@ -54,7 +52,10 @@
           <div data-key="space" class="small">Space<small>respawn</small></div>
           <div data-key="enter" class="small">Enter<small>OK</small></div>
         </div>
-        <div data-key="up" class="big" aria-label="Up (jump)">&uarr;</div>
+        <div class="row">
+          <div data-key="down" aria-label="Down">&darr;</div>
+          <div data-key="up" aria-label="Up (jump)">&uarr;</div>
+        </div>
       </div>
     </div>
   </div>
