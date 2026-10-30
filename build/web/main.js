@@ -113,6 +113,24 @@ if (buildInfo.build) builder = builder.withEnvironmentVariable('CK_BUILD', build
 // froze the tab. '-precise' turns only that option off (the interpreter stack is then scanned conservatively).
 // ?interp_opts=<MONO_INTERPRETER_OPTIONS> overrides it (an empty value restores the default).
 if (params.get('loop') !== 'fna') builder = builder.withEnvironmentVariable('CK_MAIN_LOOP', 'js');
+// Display -> Resolution (or ?res=<width>): the game's drawing buffer, 16:9; the canvas is scaled to fit either way.
+// A smaller buffer is less for a phone's GPU to fill. The game reads it at start, so a change reloads the page.
+const RESOLUTION_KEY = 'ck.resolution';
+const RESOLUTIONS = ['1280', '960', '640'];
+let resolution = '1280';
+try { const saved = localStorage.getItem(RESOLUTION_KEY); if (RESOLUTIONS.includes(saved)) resolution = saved; } catch (e) { /* storage blocked */ }
+if (params.has('res')) resolution = params.get('res');
+builder = builder.withEnvironmentVariable('CK_BACKBUFFER_WIDTH', resolution);
+const resolutionSelect = document.getElementById('resolution');
+if (resolutionSelect) {
+  resolutionSelect.value = RESOLUTIONS.includes(resolution) ? resolution : '1280';
+  resolutionSelect.addEventListener('change', () => {
+    try { localStorage.setItem(RESOLUTION_KEY, resolutionSelect.value); } catch (e) { /* storage blocked */ }
+    location.reload();
+  });
+}
+// ?fire=1: the fireball's animated textures (three offscreen passes a frame that the box drawing never shows).
+if (params.get('fire') === '1') builder = builder.withEnvironmentVariable('CK_FIRE_TEXTURES', '1');
 builder = builder.withEnvironmentVariable('MONO_INTERPRETER_OPTIONS', params.has('interp_opts') ? params.get('interp_opts') : '-precise');
 if (params.get('mono_log')) builder = builder.withEnvironmentVariable('MONO_LOG_LEVEL', 'debug').withEnvironmentVariable('MONO_LOG_MASK', params.get('mono_log'));
 // Loading progress: the runtime's downloads (and the Content files below) go through a fetch that counts the bytes it

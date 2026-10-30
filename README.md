@@ -57,6 +57,12 @@ turns this off. The Controls panel's **Show FPS** (or `?fps=1`) shows the screen
 per second (60 = full speed) and how long the game's frames take. While the page loads, it shows how much of the
 game (about 24 MB) has downloaded.
 
+**Lighter drawing:** the game renders its fireball textures every frame (three offscreen passes and their
+particles), which box drawing never shows; this build skips them (`?fire=1` restores them). Measured headless
+(software GPU, attract mode): 12–19 frames a second with them, 55–60 without. **Display → Resolution** picks the
+drawing buffer (1280×720, 960×540 or 640×360; the page scales it to fit, and a change reloads the page); lower is
+less for a phone's GPU to fill. `build/build.sh --profile` keeps function names in the `.wasm` for a profiler.
+
 This build loads no art, so where the game would draw a key's picture (the door's "Press ↑", the hints) it writes
 the key's name instead. The drawing buffer is fixed at 1280×720 (the game would otherwise size it to the screen,
 which squashes it on a phone); the page scales it to fit.

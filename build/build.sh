@@ -2,7 +2,7 @@
 # build.sh — Builds the engine-only browser page from this repository.
 #
 # Usage:  build/build.sh --out <site-dir>
-#             [--fna <FNA clone>] [--natives <dir>] [--debug-log] [--api] [--build-id <text>]
+#             [--fna <FNA clone>] [--natives <dir>] [--debug-log] [--profile] [--api] [--build-id <text>]
 #             [--fxc <fxc.exe>] [--shaders <dir of .fxb>] [--dotnet <dotnet>]
 #
 #   --out        the site directory to (re)create: _framework/, Content/, index.html, main.js, touch.js,
@@ -12,6 +12,7 @@
 #   --natives    where FNA-WASM-Build's archives live; downloaded there if absent
 #                (default: ${XDG_CACHE_HOME:-~/.cache}/cloudberry-browser/natives/<release>)
 #   --debug-log  define DEBUG in the Release/AOT build (the game's Tools.Write log lines, e.g. "Level made!")
+#   --profile    keep the function names in the .wasm (a browser profiler then shows C# method names; larger file)
 #   --api        the page starts in generator-API mode without ?api=1 (?api=0 turns it off)
 #   --build-id   the text the page reports as engine.build (default: this repository's commit, + "-dirty"
 #                if the tree has changes)
@@ -52,14 +53,15 @@ readonly BIN_DIR="bin-browser"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
-GAME="$REPO_ROOT" OUT="" FNA="" NATIVES="" DEBUG_LOG=0 API=0 BUILD_ID="" FXC_EXE="" SHADERS="" DOTNET_EXE="${DOTNET:-}"
+usage() { sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+GAME="$REPO_ROOT" OUT="" FNA="" NATIVES="" DEBUG_LOG=0 PROFILE=0 API=0 BUILD_ID="" FXC_EXE="" SHADERS="" DOTNET_EXE="${DOTNET:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT="$2"; shift 2 ;;
     --fna) FNA="$2"; shift 2 ;;
     --natives) NATIVES="$2"; shift 2 ;;
     --debug-log) DEBUG_LOG=1; shift ;;
+    --profile) PROFILE=1; shift ;;
     --api) API=1; shift ;;
     --build-id) BUILD_ID="$2"; shift 2 ;;
     --fxc) FXC_EXE="$2"; shift 2 ;;
@@ -102,6 +104,7 @@ step "dotnet publish Game.Browser.csproj (AOT)"
 props=(-c Release -p:RunAOTCompilation=true "-p:BaseIntermediateOutputPath=$OBJ_DIR/" "-p:BaseOutputPath=$BIN_DIR/"
        "-p:CkNativeLibDir=$NATIVES" "-p:CkNativeSourceDir=$HERE/native" "-p:CkFnaDir=$FNA" -nodeReuse:false)
 [ $DEBUG_LOG -eq 1 ] && props+=(-p:CkDebugLog=true)
+[ $PROFILE -eq 1 ] && props+=(-p:WasmNativeStrip=false -p:WasmNativeDebugSymbols=true)
 publish_root="$GAME/Game/$BIN_DIR/Release/$TFM/publish"
 rm -rf "$publish_root"   # the publish wwwroot otherwise accumulates fingerprinted copies of earlier builds
 start=$(date +%s)

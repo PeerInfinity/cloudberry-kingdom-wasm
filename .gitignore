@@ -1,6 +1,7 @@
 # Built sites and native archives are never committed: the .wasm and the assemblies in _framework/
 # are the game's compiled code (see LICENSE.md).
 site/
+site-*/
 sites/
 _framework/
 bin/
