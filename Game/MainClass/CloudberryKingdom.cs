@@ -569,7 +569,9 @@ namespace CloudberryKingdom
                 rez.Height = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Height;
             }
 
-#if DEBUG || INCLUDE_EDITOR
+#if DEBUG || INCLUDE_EDITOR || BROWSER
+            // BROWSER: the page scales a fixed 16:9 canvas; the display mode is the device's screen (a phone in
+            // portrait reports 412x915), which would squash the picture.
             rez.Mode = WindowMode.Windowed;
             rez.Width = 1280;
             rez.Height = 720;
