@@ -40,8 +40,14 @@ lines, `--api` starts the page in generator-API mode. `build/build.sh --help` li
 
 ## Playing
 
-The game's own PC keys. Menus: arrows (or W/S) choose, Enter or Space confirm, Esc back. In a level: ←/→ or A/D
-run, ↑ or W jump, Esc pause, Enter the power-up menu, Space restart from the door. Free Play is inside The Arcade.
+The game's own PC keys, unchanged. Menus: arrows (or W/S) choose, Enter or Space confirm, Esc or Backspace back.
+In a level: ←/→ or A/D run, ↑ or W jump, ↓ or S duck, ↑ or W at the exit door finish the level, Space quick
+respawn, Enter the power-up menu, Esc or Backspace pause. Free Play is inside The Arcade. The page's
+collapsible Controls panel lists the same keys.
+
+This build loads no art, so where the game would draw a key's picture (the door's "Press ↑", the hints) it writes
+the key's name instead. The drawing buffer is fixed at 1280×720 (the game would otherwise size it to the screen,
+which squashes it on a phone); the page scales it to fit.
 
 ## Generator API
 

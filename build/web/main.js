@@ -8,6 +8,22 @@ const canvas = document.getElementById('canvas');
 // ?mono_log=<mask> turns on Mono's own logging (e.g. dll = P/Invoke resolution).
 const params = new URLSearchParams(location.search);
 
+// The Controls panel: SDL reads the keyboard from the whole window, so a focused <summary> would also take the
+// game's Space and Enter as "toggle the panel". A click toggles it without focusing it. Open or closed is remembered.
+const PANEL_OPEN_KEY = 'ck.panelOpen';
+const PANEL_CLOSED_BELOW_HEIGHT_PX = 600;   // a phone in landscape: the game gets the whole height by default
+const panel = document.getElementById('panel');
+if (panel) {
+  try { const saved = localStorage.getItem(PANEL_OPEN_KEY); panel.open = saved !== null ? saved === '1' : innerHeight >= PANEL_CLOSED_BELOW_HEIGHT_PX; } catch (e) { /* storage blocked */ }
+  const summary = panel.querySelector('summary');
+  summary.addEventListener('mousedown', (e) => e.preventDefault());
+  summary.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') e.preventDefault(); });
+  panel.addEventListener('toggle', () => {
+    summary.blur();
+    try { localStorage.setItem(PANEL_OPEN_KEY, panel.open ? '1' : '0'); } catch (e) { /* storage blocked */ }
+  });
+}
+
 // ?fpsbeacon=1: every BEACON_PERIOD_MS, report rAF frames/s and the count of the game's
 // "Level made!" lines as a GET to ./__beacon (a static server logs the query string).
 const BEACON_PERIOD_MS = 5000;

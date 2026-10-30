@@ -2,18 +2,56 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Cloudberry Kingdom engine-only (browser)</title>
   <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; background: #111; color: #ccc; font: 12px monospace; }
-    body { display: flex; flex-direction: column; align-items: center; justify-content: center; }
-    /* The drawing buffer stays 1280x720; CSS scales it to the window so the arrow keys and Space never scroll the page. */
-    canvas { display: block; width: min(100vw, calc((100vh - 2em) * 16 / 9)); aspect-ratio: 16 / 9; outline: none; }
-    #keys { height: 2em; line-height: 2em; white-space: nowrap; overflow: hidden; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #111; color: #ccc; font: 12px/1.5 monospace; }
+    body { display: flex; flex-direction: column; height: 100dvh; }
+    /* The stage takes whatever height the panel leaves; the canvas is the largest 16:9 box that fits in it.
+       The drawing buffer stays 1280x720 and CSS scales it, so the arrow keys and Space never scroll the page. */
+    #stage { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; container-type: size; }
+    canvas { display: block; width: min(100cqw, 100cqh * 16 / 9); height: auto; aspect-ratio: 16 / 9; outline: none; }
+    #panel { flex: 0 0 auto; max-height: 45dvh; overflow-y: auto; border-top: 1px solid #333; background: #181818; }
+    #panel > summary { cursor: pointer; padding: 2px 12px; user-select: none; color: #999; }
+    #panel > summary:hover { color: #ddd; }
+    .keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(17em, 1fr)); gap: 0 2em; padding: 0 12px 6px; }
+    .keys h2 { font-size: inherit; font-weight: bold; color: #ddd; margin: 4px 0 0; }
+    .keys dl { display: grid; grid-template-columns: max-content 1fr; gap: 0 1em; margin: 0; }
+    .keys dt { color: #fff; }
+    .keys dd { margin: 0; }
   </style>
 </head>
 <body>
-  <canvas id="canvas" width="1280" height="720" tabindex="-1"></canvas>
-  <div id="keys">Menus: arrows (or W S) choose, Enter or Space confirm, Esc back &middot; Level: &larr; &rarr; / A D run, &uarr; / W jump, Esc pause, Enter power-ups, Space restart from the door</div>
+  <div id="stage"><canvas id="canvas" width="1280" height="720" tabindex="-1"></canvas></div>
+  <details id="panel" open>
+    <summary>Controls</summary>
+    <div class="keys">
+      <section>
+        <h2>In a level</h2>
+        <dl>
+          <dt>&larr; &rarr; / A D</dt><dd>run</dd>
+          <dt>&uarr; / W</dt><dd>jump</dd>
+          <dt>&darr; / S</dt><dd>duck</dd>
+          <dt>&uarr; / W at the door</dt><dd>finish the level</dd>
+          <dt>Space</dt><dd>quick respawn</dd>
+          <dt>Enter</dt><dd>power-up menu</dd>
+          <dt>Esc / Backspace</dt><dd>pause</dd>
+        </dl>
+      </section>
+      <section>
+        <h2>Menus</h2>
+        <dl>
+          <dt>&uarr; &darr; / W S</dt><dd>choose (or point with the mouse)</dd>
+          <dt>Enter / Space</dt><dd>confirm</dd>
+          <dt>Esc / Backspace</dt><dd>back</dd>
+        </dl>
+        <h2>Where to play</h2>
+        <dl>
+          <dt>Free Play</dt><dd>The Arcade &rarr; Free Play</dd>
+        </dl>
+      </section>
+    </div>
+  </details>
   <script type="module" src="./main.js"></script>
 </body>
 </html>
