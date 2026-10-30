@@ -65,6 +65,10 @@ layer.addEventListener('pointermove', (e) => { if (fingers.has(e.pointerId)) mov
 layer.addEventListener('pointerup', endFinger);
 layer.addEventListener('pointercancel', endFinger);
 layer.addEventListener('contextmenu', (e) => e.preventDefault());
+// A phone recognises a long press (and buzzes for it) from the TOUCH events, which a cancelled pointerdown does not
+// cancel; so the buttons cancel their touches too, non-passively (a passive listener's preventDefault is ignored).
+// Only the buttons take touches (pointer-events: none elsewhere), and the pointer events above have already fired.
+for (const type of ['touchstart', 'touchmove', 'touchend']) layer.addEventListener(type, (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
 // A hidden page (app switch, screen lock) never sends the pointerup: let every key go.
 document.addEventListener('visibilitychange', () => { if (document.hidden) for (const id of [...fingers.keys()]) endFinger({ pointerId: id }); });
 
