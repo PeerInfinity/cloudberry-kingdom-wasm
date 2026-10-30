@@ -36,14 +36,29 @@ namespace CloudberryKingdom
             Console.WriteLine("[main-loop] js: Main returns; the page steps frames");
         }
 
+        /// <summary>Physics steps per drawn frame (CloudberryKingdomGame.Draw multiplies its own count by this).</summary>
+        public static int StepsPerDraw = 1;
+
         [JSExport]
         public static bool Frame()
         {
+            return FrameSteps(1);
+        }
+
+        /// <summary>One drawn frame that advances the game by the given number of physics steps (the page's pacing).</summary>
+        [JSExport]
+        public static bool FrameSteps(int steps)
+        {
             if (TheGame == null) return false;
+            StepsPerDraw = steps;
             TheGame.RunOneFrame();
             FramesRun++;
             return true;
         }
+
+        /// <summary>The game's physics step count (for the page's FPS display).</summary>
+        [JSExport]
+        public static int PhysicsCount() { return Tools.TheGame != null ? Tools.TheGame.PhsxCount : 0; }
 
         [JSExport]
         public static int FrameCount() { return FramesRun; }

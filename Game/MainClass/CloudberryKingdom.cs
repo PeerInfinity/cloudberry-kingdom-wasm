@@ -1384,11 +1384,14 @@ namespace CloudberryKingdom
                 }
             }
 
+#if !BROWSER
+            // BROWSER: the page paces the frames (BrowserMainLoop.Frame); a Sleep here would block the only thread.
             if (DelayAmount > 1 * DelayIncr)
             {
                 Thread.Sleep((int)(1000 * DelayAmount));
                 //return;
             }
+#endif
 
             // Stop now if the initial preload (and logosalad) hasn't started yet.
             if (!PreloadDone) { SetupToRender(); return; }
@@ -1558,6 +1561,11 @@ namespace CloudberryKingdom
             else if (Tools.PhsxSpeed == 1) Reps = 1;
             else if (Tools.PhsxSpeed == 2) Reps = 2;
             else if (Tools.PhsxSpeed == 3) Reps = 4;
+#if BROWSER
+            // The page runs physics at 60 steps a second whatever the display's frame rate: it skips draws on a 120 Hz
+            // screen and asks for several steps per draw when the device draws fewer than 60 frames.
+            Reps *= BrowserMainLoop.StepsPerDraw;
+#endif
 
             // Do the phsx
             for (int i = 0; i < Reps; i++)
