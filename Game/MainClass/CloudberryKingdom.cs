@@ -576,6 +576,11 @@ namespace CloudberryKingdom
             rez.Width = 1280;
             rez.Height = 720;
 #endif
+#if BROWSER
+            // The page's Resolution setting: a smaller drawing buffer (still 16:9) is less for a phone's GPU to fill.
+            rez.Width = BrowserMainLoop.BackbufferWidth;
+            rez.Height = rez.Width * 9 / 16;
+#endif
 
             Resolution = new ResolutionGroup();
             Resolution.Backbuffer = new IntVector2(rez.Width, rez.Height);
@@ -1037,6 +1042,9 @@ namespace CloudberryKingdom
             ButtonCheck.UpdateControllerAndKeyboard_EndOfStep(Resolution);
 
             // Update the fireball textures.
+#if BROWSER
+            if (BrowserMainLoop.FireTextures)
+#endif
             Fireball.TexturePhsx();
         }
         
@@ -1641,6 +1649,9 @@ namespace CloudberryKingdom
             Tools.Render.SetStandardRenderStates();
 
             Tools.QDrawer.SetInitialState();
+#if BROWSER
+            if (BrowserMainLoop.FireTextures)
+#endif
             ComputeFire();
 
             Tools.EffectWad.SetCameraPosition(cameraPos);

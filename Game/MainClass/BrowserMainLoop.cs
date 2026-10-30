@@ -36,6 +36,22 @@ namespace CloudberryKingdom
             Console.WriteLine("[main-loop] js: Main returns; the page steps frames");
         }
 
+        /// <summary>
+        /// The fireball's animated textures (three offscreen render passes and their particles, every frame). Engine-only
+        /// mode draws fireballs as boxes and never shows them, so they are off unless the page sets CK_FIRE_TEXTURES=1.
+        /// </summary>
+        public static readonly bool FireTextures = CloudberryKingdomGame.LoadResources || Environment.GetEnvironmentVariable("CK_FIRE_TEXTURES") == "1";
+
+        /// <summary>The drawing buffer's width (16:9), from the page's Resolution setting (CK_BACKBUFFER_WIDTH; default 1280).</summary>
+        public static int BackbufferWidth
+        {
+            get
+            {
+                int w;
+                return int.TryParse(Environment.GetEnvironmentVariable("CK_BACKBUFFER_WIDTH"), out w) && w >= 320 && w <= 1920 ? w : 1280;
+            }
+        }
+
         /// <summary>Physics steps per drawn frame (CloudberryKingdomGame.Draw multiplies its own count by this).</summary>
         public static int StepsPerDraw = 1;
 
