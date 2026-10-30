@@ -87,10 +87,17 @@ document's `args.request`), so storing that request regenerates the same documen
 game waits for its host to call `window.__swfBridge.configure(...)` with a region payload (`cloudberry-region/1`: a
 resolved `ck-level/2` request, the sha256 of its document, which coins are checks, the exits). The page regenerates
 the level, refuses it loudly if the document's hash differs, and plays it. Collecting a check coin calls the host's
-`sendLocation`, Up at the end door its `sendExit`, held items arrive through `pollItems` (a platform type you do not
-hold is drawn faint and cannot be landed on; the Jetpack item switches the hero's jetpack), and `botWalkTo` lets the
-computer's recording play a coin or the door for you. `host-sim.html` plays the host's part, so you can try it without
-a host: pick a region, toggle items and gates, send the bot, and read what the page sends.
+`sendLocation`. Up at the end door opens the exit menu: the region's exits on the arrow keys by side (↑ north, → east,
+↓ south, ← west, or W A S D; Esc closes it; the game is paused while it is open), and the one you pick calls the host's
+`sendExit`; an exit the host has closed is greyed out and cannot be picked. Up at the start door offers the way back
+(the exit on the side you came in by). Held items arrive through `pollItems` (a platform type you do not hold is
+drawn as a dashed outline and cannot be landed on; the Jetpack item switches the hero's jetpack), and `botWalkTo`
+lets the computer's recording play a coin or the door for you.
+
+Check coins are drawn as the Archipelago logo, read at run time from Archipelago-CC's art library (`?packs=<base
+url>` points the page at another copy); when it cannot be read they are larger purple coins. A check the host says
+is already checked (`setCheckedLocations`) is drawn as an outline. `host-sim.html` plays the host's part, so you can
+try it all without a host: pick a region, toggle items and gates, send the bot, and read what the page sends.
 
 ## More detail
 

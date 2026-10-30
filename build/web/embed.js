@@ -13,11 +13,15 @@
 //     botWalkTo(goal, options)      {kind:'pickup', id:<check name>} = respawn at the coin's piece checkpoint and play that
 //                                   piece's recording to the coin; {kind:'portal', id:<side>} = respawn at the last piece's
 //                                   checkpoint and play to the end door (then leave by that side). options: {snap}.
-//     botStop(), reset(), setHostState(state) (kept; nothing in P1a reads it)
+//     botStop(), reset(), setHostState(state) (kept; nothing reads it yet)
+//     setCheckedLocations(names)    OPTIONAL (P1b): the check names the host has as checked; their coins are drawn as
+//                                   outlines (configure's checkedLocations seeds the same set)
 //   host side, called by the page:
 //     sendLocation(<check name>)    when a check coin is collected (once per configure; the bridge maps it to the AP name)
-//     sendExit(<exitName>, <side>)  at the end door (P1a: the first open exit, or the bot's side; P1b: the exit menu)
-//     setPlayClock(running, {gameSeconds})  every second and on change
+//     sendExit(<exitName>, <side>)  chosen in the exit menu (Up at the end door: every exit; Up at the start door: the
+//                                   way back, the exit on entrySide), or the bot's side when the bot walked to the door
+//     setPlayClock(running, {gameSeconds})  every second and on change; running is false while the game is paused
+//                                   (the exit menu is open, or the page is hidden)
 //
 // PAYLOAD (params), version 'cloudberry-region/1':
 //   { payload: 'cloudberry-region/1',
@@ -26,10 +30,17 @@
 //     checks: { '<check name>': <coin id>, … },   the coins that are AP location checks (names are the ap_locations keys)
 //     items: { '<AP item name>': '<game item>' }  optional; game items = the 9 platform items + 'Jetpack'; else ap_items,
 //                                  else the AP item name is the game item name
-//     exits: [{ side, exitName }],  the region's exits, offered at the end door
+//     exits: [{ side, exitName, label? }],  the region's exits, offered at the end door; label (optional, short) is shown
+//                                  under the name, e.g. what a closed exit needs; a closed exit without one says "locked"
 //     sidePortals: { <side>: <side> }   the bridge's walkTo translation (portal id = side)
-//     entrySide: <side> | null }   the side entered from (P1b: the start door's way back)
+//     entrySide: <side> | null }   the side entered from: the start door offers that exit as the way back (never gated by
+//                                  the level; setGateStates may still close it); null = no menu at the start door
+// Page parameter packs=<url>: the art library's base URL (default check-look.js DEFAULT_PACKS_BASE) for the check
+// coins' Archipelago logo; when it cannot be read the check coins are larger purple coins instead.
 // Test surface (not the contract): window.__cloudberryEmbed.
+
+import { createExitMenu, SIDES } from './exit-menu.js';
+import { loadCheckLook, DEFAULT_PACKS_BASE } from './check-look.js';
 
 export const PAYLOAD_VERSION = 'cloudberry-region/1';
 const PLATFORM_ITEMS = ['MovingBlock', 'FallingBlock', 'BouncyBlock', 'GhostBlock', 'Cloud', 'Elevator', 'Pendulum', 'Conveyor', 'FlyBlob'];
@@ -48,11 +59,12 @@ export async function docSha256(text) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export function start({ exports, generateText, ready }) {
+export function start({ exports, generateText, ready, setPaused = () => {} }) {
   const app = {
     config: null, payload: null, playResult: null, refusal: null, configures: 0,
     items: [], gates: { portals: {}, pickups: {} }, heldLocations: new Set(), sent: [], exits: [],
     pendingBot: null, lastBotGoal: null, hostState: null, events: [], physics0: 0, clockRunning: null,
+    checked: new Set(), menu: null, paused: new Set(), look: null,
   };
   let configureChain = Promise.resolve();
   let configureSeq = 0;
@@ -63,6 +75,39 @@ export function start({ exports, generateText, ready }) {
   document.getElementById('stage')?.appendChild(statusEl);
   const show = (text, bad = false) => { statusEl.textContent = text; statusEl.style.color = bad ? '#f88' : '#ddd'; };
   show('Cloudberry Kingdom — waiting for a region…');
+
+  // Pausing (the page stops stepping the game: main.js): while the exit menu is open, and while the page is hidden.
+  const pause = (reason, on) => {
+    if (on) app.paused.add(reason); else app.paused.delete(reason);
+    setPaused(reason, on);
+    if (app.config) playClock();
+  };
+
+  const menu = createExitMenu({
+    container: document.getElementById('stage') ?? document.body,
+    before: document.getElementById('touch'),
+    onChoose: (entry) => {
+      show(`region ${app.config?.regionId ?? '?'} — leaving by the ${entry.side} exit: ${entry.exitName}`);
+      sendExit(entry.exitName, entry.side, entry.door);
+    },
+    onClose: () => {
+      app.menu = null;
+      pause('menu', false);
+      // Up at a door opens the menu again (once Up is released).
+      try { exports.EmbedMode.RearmDoorsNow(); } catch (e) { /* no level */ }
+    },
+  });
+
+  // The check coins' look: the art library's Archipelago logo, or the purple fallback (check-look.js).
+  const packsBase = new URLSearchParams(location.search).get('packs') || DEFAULT_PACKS_BASE;
+  const lookReady = loadCheckLook(packsBase).then(async (look) => {
+    await ready();
+    const r = JSON.parse(exports.EmbedMode.SetCheckLookJson(JSON.stringify({ w: look.w, h: look.h, size: look.size, fill: look.fill, outline: look.outline })));
+    app.look = { source: look.source, reason: look.reason, sheet: look.sheet, base: look.base, size: look.size, applied: r };
+    if (look.source === 'fallback') console.warn('[cloudberry-embed] check coins: the art library could not be read (' + look.reason + '); purple fallback coins');
+    else console.log('[cloudberry-embed] check coins: the Archipelago logo from ' + look.sheet);
+    return app.look;
+  }).catch((e) => { console.error('[cloudberry-embed] check-coin look failed', e); app.look = { source: 'default', reason: String(e) }; });
 
   const refuse = (why, detail) => {
     app.refusal = why;
@@ -95,6 +140,7 @@ export function start({ exports, generateText, ready }) {
   async function configureNow(config, seq) {
     app.refusal = null;
     app.playResult = null;
+    menu.close('replaced');
     // The level being replaced stops at once (back to the empty level): nothing more from it reaches the host, which
     // already maps names by the new region's payload.
     exports.EmbedMode.StopNow();
@@ -135,6 +181,7 @@ export function start({ exports, generateText, ready }) {
     app.doc = { sha, pieces: doc.level?.numPieces, coins: doc.coins.count, door: doc.goal?.door };
     app.exits = Array.isArray(params.exits) ? params.exits : [];
     app.heldLocations = new Set();
+    app.checked = checkedNames;
     app.sent = [];
     app.configures++;
     app.physics0 = exports.BrowserMainLoop.PhysicsCount();
@@ -147,18 +194,38 @@ export function start({ exports, generateText, ready }) {
     return app.exits.find((e) => e.side === side) ?? null;
   }
 
-  function openExits() {
-    return app.exits.filter((e) => app.gates.portals?.[e.side] !== false);
+  const portalOpen = (side) => app.gates.portals?.[side] !== false;
+
+  function sendExit(exitName, side, door) {
+    app.events.push({ kind: 'sendExit', exitName, side, door: door ?? null });
+    call('sendExit', exitName, side);
+  }
+
+  /** The menu's entries for a door: the end door lists every exit; the start door the way back (entrySide's exit). */
+  function menuEntries(door) {
+    const list = door === 'start' ? app.exits.filter((e) => e.side === app.payload?.entrySide) : app.exits.filter((e) => SIDES.includes(e.side));
+    return list.map((e) => ({ door, side: e.side, exitName: e.exitName, open: portalOpen(e.side), label: typeof e.label === 'string' && e.label ? e.label : undefined }));
+  }
+
+  function openMenu(door) {
+    app.menu = { door };
+    menu.open({ title: door === 'start' ? 'Go back the way you came' : `Leave ${app.config?.regionId ?? 'this region'}`, entries: menuEntries(door) });
+    pause('menu', true);
   }
 
   function onDoor(ev) {
-    // P1a: where P1b's exit menu will hang. The bot leaves by the side it walked to; the player by the first open exit.
-    const botSide = ev.bot && app.lastBotGoal?.kind === 'portal' ? app.lastBotGoal.id : null;
-    const exit = botSide ? exitFor(botSide) : openExits()[0] ?? null;
-    if (!exit) { show(`region ${app.config?.regionId ?? '?'} — at the door, but no exit is open`); return; }
-    if (app.gates.portals?.[exit.side] === false) { show(`region ${app.config?.regionId ?? '?'} — the ${exit.side} exit is closed`); return; }
-    app.events.push({ kind: 'sendExit', exitName: exit.exitName, side: exit.side });
-    call('sendExit', exit.exitName, exit.side);
+    const region = app.config?.regionId ?? '?';
+    if (ev.bot) {
+      // The bot leaves by the side it walked to, without the menu.
+      const botSide = app.lastBotGoal?.kind === 'portal' ? app.lastBotGoal.id : null;
+      const exit = botSide ? exitFor(botSide) : null;
+      if (!exit) { show(`region ${region} — the bot is at the door, but there is no ${botSide} exit`); return; }
+      if (!portalOpen(exit.side)) { show(`region ${region} — the ${exit.side} exit is closed`); return; }
+      sendExit(exit.exitName, exit.side, 'end');
+      return;
+    }
+    if (ev.door === 'start' && !app.payload?.entrySide) return;   // no way back offered: the start door does nothing
+    openMenu(ev.door === 'start' ? 'start' : 'end');
   }
 
   function sendLocation(name) {
@@ -185,13 +252,15 @@ export function start({ exports, generateText, ready }) {
   requestAnimationFrame(pump);
 
   function playClock() {
-    const running = !!app.playResult?.ok && !document.hidden;
+    const running = !!app.playResult?.ok && !document.hidden && app.paused.size === 0;
     const gameSeconds = app.playResult?.ok ? (exports.BrowserMainLoop.PhysicsCount() - app.physics0) / PHYSICS_HZ : 0;
     app.clockRunning = running;
     call('setPlayClock', running, { gameSeconds });
   }
   setInterval(() => { if (app.config) playClock(); }, PLAY_CLOCK_PERIOD_MS);
-  document.addEventListener('visibilitychange', () => { if (app.config) playClock(); });
+  // A hidden page (another tab, a minimised window) pauses the game; the clock reports it stopped.
+  document.addEventListener('visibilitychange', () => pause('hidden', document.hidden));
+  if (document.hidden) pause('hidden', true);
 
   function botWalkTo(goal, options) {
     if (!app.playResult?.ok) { app.pendingBot = { goal, options }; return; }
@@ -216,6 +285,12 @@ export function start({ exports, generateText, ready }) {
       for (const name of [...app.heldLocations]) {
         if (app.gates.pickups[name] !== false) { app.heldLocations.delete(name); sendLocation(name); }
       }
+      // An open menu shows the new states.
+      if (app.menu) menu.open({ title: menu.element.querySelector('h2')?.textContent ?? '', entries: menuEntries(app.menu.door) });
+    },
+    setCheckedLocations(names) {
+      app.checked = new Set(Array.isArray(names) ? names : []);
+      if (app.playResult?.ok) app.checkedState = JSON.parse(exports.EmbedMode.SetCheckedJson(JSON.stringify([...app.checked])));
     },
     botWalkTo: (goal, options) => botWalkTo(goal, options),
     botStop() { app.pendingBot = null; exports.EmbedMode.BotStopNow(); },
@@ -226,11 +301,16 @@ export function start({ exports, generateText, ready }) {
 
   window.__cloudberryEmbed = {
     app,
+    menu,
+    lookReady,
+    rearmDoors: () => exports.EmbedMode.RearmDoorsNow(),
+    physicsCount: () => exports.BrowserMainLoop.PhysicsCount(),
+    pause: (reason, on) => pause(reason, on),
     status: () => JSON.parse(exports.EmbedMode.Status()),
     configured: () => app.configures,
     docSha256: async (args) => docSha256(await generateText(args)),
     canonicalDocText,
   };
   window.dispatchEvent(new CustomEvent('cloudberry-embed-ready'));
-  console.log('[cloudberry-embed] ready: window.__swfBridge (configure, pollItems, setGateStates, botWalkTo, botStop, reset, setHostState)');
+  console.log('[cloudberry-embed] ready: window.__swfBridge (configure, pollItems, setGateStates, setCheckedLocations, botWalkTo, botStop, reset, setHostState)');
 }

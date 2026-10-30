@@ -335,6 +335,10 @@ const STEP_TOLERANCE = 0.25;      // of a step: 60 Hz frames that arrive a littl
 const MAX_STEPS_PER_DRAW = 4;     // below 15 frames/s the game slows down
 const MAX_FRAME_GAP_MS = 250;     // a longer gap (a stall, a background tab) counts as this
 const rawPace = params.get('pace') === 'raw';
+// Pausing (embedded mode: the exit menu is open, or the page is hidden): while any reason holds, the page does not step
+// the game at all (no physics, no drawing: the canvas keeps its last frame), and the time paused is not owed afterwards.
+const pauseReasons = new Set();
+const setPaused = (reason, on) => { if (on) pauseReasons.add(reason); else pauseReasons.delete(reason); };
 
 // FPS display (Controls panel "Show FPS", or ?fps=1): screen refreshes, drawn frames and physics steps per second,
 // and the time the game's frames take.
@@ -359,7 +363,8 @@ async function startFrameLoop() {
     requestAnimationFrame(frame);
     refreshes++;
     let steps = 1;
-    if (!rawPace) {
+    if (pauseReasons.size) { steps = 0; owed = 0; }
+    else if (!rawPace) {
       owed += last === null ? STEP_MS : Math.min(now - last, MAX_FRAME_GAP_MS);
       steps = Math.floor(owed / STEP_MS + STEP_TOLERANCE);
       if (steps > MAX_STEPS_PER_DRAW) { steps = MAX_STEPS_PER_DRAW; owed = 0; } else owed -= steps * STEP_MS;
@@ -407,7 +412,7 @@ if (apiMode) {
     const embed = await import('./embed.js');
     // The canonical document hash the region payload carries (embed.js: engine.build blanked).
     window.cloudberry.docSha256 = async (args) => embed.docSha256(await generateText(args));
-    embed.start({ exports: await assemblyExports(), generateText, ready });
+    embed.start({ exports: await assemblyExports(), generateText, ready, setPaused });
   }
   // With FNA's loop Main never returns here; with the page loop it returns and the frames start.
   runMain().then(() => { console.log('[host] Main returned'); if (jsLoop) return startFrameLoop(); }, (e) => console.log('[host] Main: ' + (e && e.message || e)));

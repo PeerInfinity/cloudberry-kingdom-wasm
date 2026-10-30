@@ -46,6 +46,9 @@
     <h2>Bot <small>(botWalkTo)</small></h2>
     <div id="bot"></div>
     <label><input type="checkbox" id="snap"> snap to the recording (the engine's replay correction)</label>
+    <h2>Host</h2>
+    <label title="after each sendLocation, call setCheckedLocations with every check sent so far (the host accepted it): the coin is then drawn as an outline"><input type="checkbox" id="markChecked" checked> mark sent checks as checked</label>
+    <label title="exits[].label on the north exit (shown under its name in the exit menu)"><input type="checkbox" id="labels" checked> exit labels</label>
     <h2>Sent by the page</h2>
     <div id="log"></div>
     <h2>Page state</h2>
@@ -57,7 +60,10 @@
     // (sendLocation / sendExit / setPlayClock / requestHost) and calls the game side.
     const ITEMS = ['MovingBlock', 'FallingBlock', 'BouncyBlock', 'GhostBlock', 'Cloud', 'Elevator', 'Pendulum', 'Conveyor', 'FlyBlob', 'Jetpack'];
     const SIDES = ['north', 'east', 'south', 'west'];
-    const EXITS = SIDES.map((side) => ({ side, exitName: `Region 1 ${side} exit` }));
+    // A label (optional, P1b) is the short text the exit menu shows under an exit's name; the host would say what a closed
+    // exit needs.
+    const EXIT_LABELS = { north: 'needs Cloud (host-sim)' };
+    const exitsFor = (labels) => SIDES.map((side) => ({ side, exitName: `Region 1 ${side} exit`, ...(labels && EXIT_LABELS[side] ? { label: EXIT_LABELS[side] } : {}) }));
     const sidePortals = Object.fromEntries(SIDES.map((s) => [s, s]));
     // Fixed payloads: the resolved request and its document hash (measured: native oracle = tab, engine.build blanked).
     const PRESETS = [
@@ -82,11 +88,11 @@
     ];
     const $ = (id) => document.getElementById(id);
     const frame = $('game');
-    const sim = { log: [], held: new Set(), portals: {}, pickups: {}, clock: null };
+    const sim = { log: [], held: new Set(), portals: {}, pickups: {}, clock: null, checked: new Set() };
     window.__hostSim = sim;
 
     function fullPayload(p) {
-      return { payload: 'cloudberry-region/1', ...p, exits: EXITS, sidePortals, entrySide: 'west' };
+      return { payload: 'cloudberry-region/1', ...p, exits: exitsFor($('labels').checked), sidePortals, entrySide: 'west' };
     }
     function payload() { return JSON.parse($('payload').value); }
     function setPayload(p) { $('payload').value = JSON.stringify(p, null, 1); renderGates(); renderBot(); }
@@ -105,7 +111,11 @@
     function installHostSide() {
       const w = game();
       w.__swfBridge = Object.assign(w.__swfBridge ?? {}, {
-        sendLocation: (name) => log('loc', `sendLocation(${JSON.stringify(name)}) → AP "${apLocations()[name] ?? '(unmapped)'}"`),
+        sendLocation: (name) => {
+          log('loc', `sendLocation(${JSON.stringify(name)}) → AP "${apLocations()[name] ?? '(unmapped)'}"`);
+          // The host accepts the check and tells the page (the coin is drawn as an outline from then on).
+          if ($('markChecked').checked) { sim.checked.add(name); setTimeout(() => gameBridge()?.setCheckedLocations?.([...sim.checked]), 0); }
+        },
         sendExit: (portalId, side) => log('exit', `sendExit(${JSON.stringify(portalId)}, ${JSON.stringify(side)})`),
         setPlayClock: (running, stats) => { sim.clock = { running, ...stats }; },
         requestHost: (request) => log('exit', `requestHost(${JSON.stringify(request)})`),
@@ -120,6 +130,7 @@
       const b = gameBridge();
       if (!b?.configure) { log('bad', 'the page has no __swfBridge.configure yet'); return; }
       sim.log.length = 0;
+      sim.checked = new Set();
       log('', `configure (${Object.keys(params.checks ?? {}).length} checks, docSha256 ${params.docSha256.slice(0, 12)}…)`);
       await b.configure({ gameId: 'cloudberry', params, ap_items: {}, ap_locations: apLocations(), regionId: 'Region 1', checkedLocations: [] });
       const app = game().__cloudberryEmbed?.app;
@@ -182,6 +193,7 @@
 
     PRESETS.forEach((p, i) => $('preset').append(new Option(p.name, String(i))));
     $('preset').addEventListener('change', () => setPayload(fullPayload(PRESETS[+$('preset').value].payload)));
+    $('labels').addEventListener('change', () => { try { const p = payload(); p.exits = exitsFor($('labels').checked); setPayload(p); } catch { /* edited payload */ } });
     $('configure').addEventListener('click', () => configure(payload()));
     $('tamper').addEventListener('click', () => { const p = payload(); p.docSha256 = p.docSha256.replace(/^./, (c) => (c === '0' ? '1' : '0')); configure(p); });
     $('make').addEventListener('click', async () => { const p = await makePayload(PRESETS[+$('preset').value].args); if (p) { setPayload(p); log('', 'payload made: ' + p.docSha256.slice(0, 12) + '…'); } });
@@ -195,13 +207,15 @@
     setInterval(() => {
       try {
         const st = game()?.__cloudberryEmbed?.status?.();
-        if (st) $('state').textContent = JSON.stringify({ ...st, clock: sim.clock }, null, 1);
+        const app = game()?.__cloudberryEmbed?.app;
+        if (st) $('state').textContent = JSON.stringify({ ...st, clock: sim.clock, menu: app?.menu ?? null, paused: [...(app?.paused ?? [])], look: app?.look ? { source: app.look.source, reason: app.look.reason } : null }, null, 1);
       } catch { /* not ready */ }
     }, 500);
 
-    // ?embedSrc= another page URL (same origin); &auto=0 leaves configure to the button.
+    // ?embedSrc= another page URL (same origin); &auto=0 leaves configure to the button; &packs=<url> is passed on to the
+    // page (the art library's base URL for the check coins' logo; a broken one shows the purple fallback).
     const q = new URLSearchParams(location.search);
-    frame.src = q.get('embedSrc') ?? './index.html?embed=1';
+    frame.src = (q.get('embedSrc') ?? './index.html?embed=1') + (q.has('packs') ? '&packs=' + encodeURIComponent(q.get('packs')) : '');
     frame.addEventListener('load', () => {
       installHostSide();
       const go = () => { installHostSide(); if (q.get('auto') !== '0') configure(payload()); };
