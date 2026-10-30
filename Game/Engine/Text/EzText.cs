@@ -814,8 +814,26 @@ namespace CloudberryKingdom
         float LineHeightMod = 1f;
         Vector2[] LineSizes = new Vector2[20];
         void Init(String str) { Init(str, 10000, false, false, 1f); }
+
+#if BROWSER
+        static readonly System.Text.RegularExpressions.Regex KeyIconCode =
+            new System.Text.RegularExpressions.Regex(@"\{p([A-Za-z0-9]+)_Key,[^}]*\}");
+
+        /// <summary>
+        /// Engine-only mode loads no art, so a keyboard-key picture ({pUp_Key,87,?}) would draw as a blank box.
+        /// Writes the key's name in its place instead: "Press {pUp_Key,87,?}" becomes "Press Up".
+        /// </summary>
+        static string KeyIconsAsText(string str)
+        {
+            if (str == null || str.IndexOf("_Key,", StringComparison.Ordinal) < 0) return str;
+            return KeyIconCode.Replace(str, m => m.Groups[1].Value == "LeftRight" ? "Left Right" : m.Groups[1].Value);
+        }
+#endif
         void Init(String str, float Width, bool Centered, bool YCentered, float LineHeightMod)
         {
+#if BROWSER
+            if (!CloudberryKingdomGame.LoadResources) str = KeyIconsAsText(str);
+#endif
             this.LineHeightMod = LineHeightMod;
             this.Centered = Centered;
             this.YCentered = YCentered;
