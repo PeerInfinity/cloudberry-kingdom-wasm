@@ -442,6 +442,9 @@ namespace CoreEngine
         }
         public void DrawLine(Vector2 x1, Vector2 x2, Color color, float width, CoreTexture Tex, CoreEffect fx, float RepeatWidth, int Dir, float BlendAddRatio, float v_shift, bool Wrap)
         {
+#if BROWSER
+            Color StraightColor = color;
+#endif
             color = ColorHelper.PremultiplyAlpha(color);
 
             Vector2 Tangent = x2 - x1;
@@ -489,6 +492,18 @@ namespace CoreEngine
 
             LineQuad.BlendAddRatio = BlendAddRatio;
 
+#if BROWSER
+            // Engine-only: box drawing alternates plain lines (NoTexture) with circles (Circle), and every switch of
+            // effect is a separate draw call (a level of pendulums made ~100 a frame). The Circle shader at its centre
+            // (uv .5,.5: no edge falloff) given the straight colour outputs exactly NoTexture's premultiplied colour,
+            // so plain lines use it too and batch with the circles.
+            if (!CloudberryKingdomGame.LoadResources && fx == null && Tex == null && BlendAddRatio == 0)
+            {
+                LineQuad.MyEffect = Tools.CircleEffect;
+                LineQuad.v0.Vertex.uv = LineQuad.v1.Vertex.uv = LineQuad.v2.Vertex.uv = LineQuad.v3.Vertex.uv = new Vector2(.5f, .5f);
+                LineQuad.v0.Vertex.Color = LineQuad.v1.Vertex.Color = LineQuad.v2.Vertex.Color = LineQuad.v3.Vertex.Color = StraightColor;
+            }
+#endif
             DrawQuad(ref LineQuad);
 
             LineQuad.BlendAddRatio = 0;

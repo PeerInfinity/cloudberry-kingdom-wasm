@@ -71,6 +71,10 @@ namespace CloudberryKingdom
         public void Draw(Color color)
         {
             Tools.QDrawer.DrawCircle(Center, Radius, color);
+#if BROWSER
+            // Engine-only: no flush per circle, so a level's circles (and plain lines: QuadDrawer.DrawLine) share draw calls.
+            if (CloudberryKingdomGame.LoadResources)
+#endif
             Tools.QDrawer.Flush();
         }
 
