@@ -209,7 +209,15 @@ namespace CloudberryKingdom.Levels
             ReverseType = (_ReverseType)Rnd.Rnd.Next(0, Tools.Length<_ReverseType>());
 
             CalculateKeepUnused(JumpLevel);
+
+            if (OnCalculated != null) OnCalculated(this);
         }
+
+        /// <summary>
+        /// Generator API: runs at the end of Calculate (inside Upgrades.CalcGenData, before the level-gen data is derived
+        /// from this style), so explicit style settings win over the draw without changing the random stream.
+        /// </summary>
+        public System.Action<StyleData> OnCalculated;
 
         protected virtual void CalculateKeepUnused(float JumpLevel)
         {

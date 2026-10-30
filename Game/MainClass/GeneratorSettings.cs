@@ -179,6 +179,52 @@ namespace CloudberryKingdom
         }
 
         // ---------------------------------------------------------------------------------------------------------
+        // Static settings: global switches some generator classes keep (LevelSeedData.NoDoublePaths, which only the
+        // attract-mode ScreenSaver ever flips; AutoGen_Parameters.IntelliSpread; Upgrades.MaxBobWidth; …)
+
+        /// <summary>The classes whose public static plain fields are generator settings.</summary>
+        public static readonly Type[] StaticOwners =
+        {
+            typeof(LevelSeedData), typeof(PieceSeedData), typeof(StyleData), typeof(AutoGen_Parameters), typeof(Upgrades),
+        };
+
+        public static List<FieldInfo> StaticFields()
+        {
+            var list = new List<FieldInfo>();
+            foreach (Type t in StaticOwners)
+            {
+                var fields = t.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.DeclaredOnly);
+                Array.Sort(fields, (x, y) => string.CompareOrdinal(x.Name, y.Name));
+                foreach (FieldInfo f in fields)
+                    if (!f.IsInitOnly && !f.IsLiteral && IsPlain(f.FieldType)) list.Add(f);
+            }
+            return list;
+        }
+
+        /// <summary>Sets {"Class.Field": value, …}; returns the previous values (the caller restores them).</summary>
+        public static List<KeyValuePair<FieldInfo, object>> ApplyStatics(JsonElement overrides)
+        {
+            var held = new List<KeyValuePair<FieldInfo, object>>();
+            var fields = StaticFields();
+            try
+            {
+                foreach (JsonProperty p in overrides.EnumerateObject())
+                {
+                    FieldInfo f = fields.FirstOrDefault(x => string.Equals(x.DeclaringType.Name + "." + x.Name, p.Name, StringComparison.OrdinalIgnoreCase));
+                    if (f == null) throw new ArgumentException("statics: no static setting '" + p.Name + "' (schema.statics)");
+                    held.Add(new KeyValuePair<FieldInfo, object>(f, f.GetValue(null)));
+                    f.SetValue(null, Convert(f.FieldType, p.Value, "statics." + p.Name));
+                }
+            }
+            catch
+            {
+                foreach (var kv in held) kv.Key.SetValue(null, kv.Value);
+                throw;
+            }
+            return held;
+        }
+
+        // ---------------------------------------------------------------------------------------------------------
         // Generators and their parameter classes
 
         public const string AutoGenSuffix = "_AutoGen";
@@ -276,6 +322,18 @@ namespace CloudberryKingdom
                     w.WriteEndObject();
                 }
                 w.WriteEndArray();
+                w.WriteEndObject();
+
+                w.WriteStartObject("statics");
+                foreach (FieldInfo f in StaticFields())
+                {
+                    w.WriteStartObject(f.DeclaringType.Name + "." + f.Name);
+                    w.WriteString("type", TypeName(f.FieldType));
+                    if (f.FieldType.IsEnum) WriteEnum(w, "values", f.FieldType);
+                    w.WritePropertyName("default");
+                    WriteValue(w, f.FieldType, f.GetValue(null));
+                    w.WriteEndObject();
+                }
                 w.WriteEndObject();
 
                 Tools.GlobalRnd = new Rand(0);

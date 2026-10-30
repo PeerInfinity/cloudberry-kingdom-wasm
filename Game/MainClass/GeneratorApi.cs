@@ -207,7 +207,7 @@ namespace CloudberryKingdom
             public List<PieceSpec> Pieces;
             public int NumPieces = -1;
             public int PieceLength = -1;
-            public JsonElement? LevelSeed, HeroCustom, ReplayHero, Upgrades, Style, Params;
+            public JsonElement? LevelSeed, HeroCustom, ReplayHero, Upgrades, Style, Params, Statics;
             public bool Coins = true;
             public bool Settings = true;
             public bool Verify;
@@ -245,6 +245,7 @@ namespace CloudberryKingdom
             Arg("style", "object", null, "StyleData overrides for every piece (schema.style.<geometry>), applied after the style's draw");
             Arg("params", "object", null, "{Gen: {member: value}} AutoGen parameter overrides for every piece (schema.params); a param is set to a constant");
             Arg("levelSeed", "object", null, "LevelSeedData overrides (schema.levelSeed), set before Initialize");
+            Arg("statics", "object", null, "{\"Class.Field\": value} the generator's static settings (schema.statics), set for this call only and restored after");
             Arg("replayHero", "object", null, "BobPhsx members changed on the hero for every replay (e.g. {NumJumps:1}, {JetPack:false})");
             Arg("held", "array", null, "platform items held for an extra replay of every piece (schema.upgrades.platformItems)");
             Arg("verify", "bool", false, "nested-piece verifier: each piece replayed with S_k held, and with each new item of S_k dropped");
@@ -319,6 +320,7 @@ namespace CloudberryKingdom
                             break;
                         case "pieceLength": a.V2 = true; a.PieceLength = p.Value.GetInt32(); break;
                         case "levelSeed": a.V2 = true; a.LevelSeed = Obj(p.Value); break;
+                        case "statics": a.V2 = true; a.Statics = Obj(p.Value); break;
                         case "heroCustom": a.V2 = true; a.HeroCustom = Obj(p.Value); break;
                         case "replayHero": a.V2 = true; a.ReplayHero = Obj(p.Value); break;
                         case "upgrades": a.V2 = true; a.Upgrades = Obj(p.Value); break;
@@ -447,6 +449,10 @@ namespace CloudberryKingdom
         {
             PieceSpec spec = a.Pieces != null && piece.MyPieceIndex >= 0 && piece.MyPieceIndex < a.Pieces.Count ? a.Pieces[piece.MyPieceIndex] : null;
 
+            // Style settings the upgrades' CalcGenData re-draws (Style.Calculate: PauseType, ReverseType, …) and then
+            // derives the level-gen data from: re-applied right after that draw.
+            piece.Style.OnCalculated = st => ApplyStyleAndParams(piece, a, spec, false);
+
             JsonElement? levels = spec != null && spec.Upgrades != null ? spec.Upgrades : a.Upgrades;
             if (levels != null)
             {
@@ -480,12 +486,15 @@ namespace CloudberryKingdom
             var buffer = new MemoryStream();
             GameData game = null;
             Args a = null;
+            List<KeyValuePair<FieldInfo, object>> holdStatics = null;
             try
             {
                 NonFinite = 0;
                 a = ParseArgs(argsJson);
                 if (!Ready) throw new InvalidOperationException("not ready: content still loading");
                 PlatformSuppression.Disable();
+
+                if (a.Statics != null) holdStatics = GeneratorSettings.ApplyStatics(a.Statics.Value);
 
                 var sw = Stopwatch.StartNew();
 
@@ -509,6 +518,9 @@ namespace CloudberryKingdom
                     data = RegularLevel.HeroLevel(a.Difficulty, hero, null, geometry, a.NumPieces, pieceLength, false,
                         d => { made = d; if (a.LevelSeed != null) GeneratorSettings.Apply(d, a.LevelSeed.Value, "levelSeed", GeneratorSettings.LevelSeedControlled); },
                         custom => piece => ModPiece(piece, custom, a, () => made));
+                    // The Custom Level menu's next step: the LevelSeedData flags that act through the pieces (HasWall
+                    // adds a StyleData.MyModParams to piece 0) or through PostMake (run when a game loads the level).
+                    data.ProcessSpecial();
                 }
                 data.SetTileSet(a.TileSet);
                 data.NoMusicStart = true;
@@ -645,6 +657,7 @@ namespace CloudberryKingdom
                 Level.ReplaySnapDisabled = false;
                 Level.ReplayRunPastEnd = false;
                 Probe = null;
+                if (holdStatics != null) foreach (var kv in holdStatics) kv.Key.SetValue(null, kv.Value);
                 if (holdSuppression) PlatformSuppression.SetHeld(holdHeld); else PlatformSuppression.Disable();
                 if (game != null) game.Release();
                 Tools.CurGameData = holdGame;
