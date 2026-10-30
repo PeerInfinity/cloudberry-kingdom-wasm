@@ -4,7 +4,7 @@ Cloudberry Kingdom (Pwnee Studios, 2013) in a browser tab. It runs the game's ow
 **no art, sound, music or video**: levels, hazards and the hero are drawn as collision boxes (Pwnee's own
 placeholder mode). It uses FNA on .NET 9 browser-wasm (Mono AOT, single-threaded, WebGL 2).
 
-**Play it:** <https://peerinfinity.github.io/cloudberry-kingdom-wasm/> (about 25 MB; desktop Chrome or Firefox, keyboard).
+**Play it:** <https://peerinfinity.github.io/cloudberry-kingdom-wasm/> (about 25 MB; keyboard, or on-screen buttons on a touch screen).
 The page is built and deployed by [`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main`;
 the built game exists only in that deployment, never in this repository.
 
@@ -44,6 +44,11 @@ The game's own PC keys, unchanged. Menus: arrows (or W/S) choose, Enter or Space
 In a level: ←/→ or A/D run, ↑ or W jump, ↓ or S duck, ↑ or W at the exit door finish the level, Space quick
 respawn, Enter the power-up menu, Esc or Backspace pause. Free Play is inside The Arcade. The page's
 collapsible Controls panel lists the same keys.
+
+**Touch screens:** on-screen buttons (← ↓ →, a big ↑ for jump, and Esc / Space / Enter) press the same keys, so they
+work in menus too: ↑ ↓ choose, Enter confirms, Esc goes back. A finger can slide between buttons, and two fingers
+work at once (run and jump). The Controls panel switches them Auto (touch screens only) / On / Off
+(`build/web/touch.js`).
 
 This build loads no art, so where the game would draw a key's picture (the door's "Press ↑", the hints) it writes
 the key's name instead. The drawing buffer is fixed at 1280×720 (the game would otherwise size it to the screen,

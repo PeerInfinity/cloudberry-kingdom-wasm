@@ -9,7 +9,9 @@
     body { display: flex; flex-direction: column; height: 100dvh; }
     /* The stage takes whatever height the panel leaves; the canvas is the largest 16:9 box that fits in it.
        The drawing buffer stays 1280x720 and CSS scales it, so the arrow keys and Space never scroll the page. */
-    #stage { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; container-type: size; }
+    #stage { position: relative; flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; container-type: size; }
+    /* With on-screen controls a tall screen puts the game at the top, so the buttons sit in the space below it. */
+    #stage.with-touch { align-items: flex-start; }
     canvas { display: block; width: min(100cqw, 100cqh * 16 / 9); height: auto; aspect-ratio: 16 / 9; outline: none; }
     #panel { flex: 0 0 auto; max-height: 45dvh; overflow-y: auto; border-top: 1px solid #333; background: #181818; }
     #panel > summary { cursor: pointer; padding: 2px 12px; user-select: none; color: #999; }
@@ -19,10 +21,43 @@
     .keys dl { display: grid; grid-template-columns: max-content 1fr; gap: 0 1em; margin: 0; }
     .keys dt { color: #fff; }
     .keys dd { margin: 0; }
+    .keys label { margin-right: 1em; cursor: pointer; }
+    body { touch-action: manipulation; }
+    /* On-screen controls: a layer over the stage; only the buttons take touches, the rest reaches the canvas. */
+    #touch { position: absolute; inset: 0; pointer-events: none; --btn: clamp(48px, 13vmin, 80px); --gap: clamp(6px, 2vmin, 14px); }
+    #touch[hidden] { display: none; }
+    #touch .cluster { position: absolute; bottom: calc(var(--gap) + env(safe-area-inset-bottom, 0px)); display: flex; gap: var(--gap); align-items: flex-end; }
+    #touch .move { left: calc(var(--gap) + env(safe-area-inset-left, 0px)); }
+    #touch .act { right: calc(var(--gap) + env(safe-area-inset-right, 0px)); flex-direction: column; align-items: flex-end; }
+    #touch .row { display: flex; gap: var(--gap); }
+    #touch [data-key] { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+      width: var(--btn); height: var(--btn); border-radius: 50%; border: 2px solid rgba(255, 255, 255, .45); background: rgba(40, 40, 40, .55);
+      color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; font: bold calc(var(--btn) * .4) sans-serif; }
+    #touch [data-key].small { width: calc(var(--btn) * .8); height: calc(var(--btn) * .62); border-radius: 12px; font-size: calc(var(--btn) * .19); }
+    #touch [data-key].small small { font-weight: normal; font-size: .85em; opacity: .8; }
+    #touch [data-key].big { width: calc(var(--btn) * 1.35); height: calc(var(--btn) * 1.35); }
+    #touch [data-key].down { background: rgba(255, 255, 255, .45); color: #000; }
   </style>
 </head>
 <body>
-  <div id="stage"><canvas id="canvas" width="1280" height="720" tabindex="-1"></canvas></div>
+  <div id="stage">
+    <canvas id="canvas" width="1280" height="720" tabindex="-1"></canvas>
+    <div id="touch" hidden>
+      <div class="cluster move">
+        <div data-key="left" aria-label="Left">&larr;</div>
+        <div data-key="down" aria-label="Down">&darr;</div>
+        <div data-key="right" aria-label="Right">&rarr;</div>
+      </div>
+      <div class="cluster act">
+        <div class="row">
+          <div data-key="escape" class="small">Esc<small>pause</small></div>
+          <div data-key="space" class="small">Space<small>respawn</small></div>
+          <div data-key="enter" class="small">Enter<small>OK</small></div>
+        </div>
+        <div data-key="up" class="big" aria-label="Up (jump)">&uarr;</div>
+      </div>
+    </div>
+  </div>
   <details id="panel" open>
     <summary>Controls</summary>
     <div class="keys">
@@ -45,6 +80,12 @@
           <dt>Enter / Space</dt><dd>confirm</dd>
           <dt>Esc / Backspace</dt><dd>back</dd>
         </dl>
+        <h2>On-screen controls</h2>
+        <div>
+          <label><input type="radio" name="touch-mode" value="auto" checked> Auto (touch screens)</label>
+          <label><input type="radio" name="touch-mode" value="on"> On</label>
+          <label><input type="radio" name="touch-mode" value="off"> Off</label>
+        </div>
         <h2>Where to play</h2>
         <dl>
           <dt>Free Play</dt><dd>The Arcade &rarr; Free Play</dd>
@@ -53,5 +94,6 @@
     </div>
   </details>
   <script type="module" src="./main.js"></script>
+  <script type="module" src="./touch.js"></script>
 </body>
 </html>
