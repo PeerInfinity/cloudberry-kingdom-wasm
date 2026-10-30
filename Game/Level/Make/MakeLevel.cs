@@ -14,6 +14,14 @@ namespace CloudberryKingdom
     {
         public static bool NoDoublePaths = true;
 
+        /// <summary>
+        /// Generator API (ck-level/2 "rerolls"): per level piece (by MyPieceIndex), the reroll attempt; attempt a &gt; 0
+        /// re-seeds the level's Rand before that piece is made (GeneratorApi.RerollSeed). Null = the game as it always was.
+        /// </summary>
+        public int[] PieceRerolls;
+        /// <summary>The seed MakeLevel started from (the base of every reroll seed).</summary>
+        public int MakeBaseSeed;
+
         public Level MakeLevel(GameData game)
         {
             return MakeLevel(true, game);
@@ -21,6 +29,7 @@ namespace CloudberryKingdom
         public Level MakeLevel(bool MakeBackground, GameData game)
         {
             this.Seed = this.Seed;
+            MakeBaseSeed = this.Seed;
             int TestNumber;
 
             game.EndMusicOnFinish = !NoMusicStart;
@@ -78,6 +87,9 @@ namespace CloudberryKingdom
                 {
                     Piece.Paths = 2;
                 }
+
+                if (PieceRerolls != null && Piece.MyPieceIndex >= 0 && Piece.MyPieceIndex < PieceRerolls.Length && PieceRerolls[Piece.MyPieceIndex] > 0)
+                    Rnd = new CoreEngine.Random.Rand(GeneratorApi.RerollSeed(MakeBaseSeed, Piece.MyPieceIndex, PieceRerolls[Piece.MyPieceIndex]));
 
                 TestNumber = Rnd.RndInt(0, 1000);
                 Tools.Write("Test 1 ---> {0}", TestNumber);

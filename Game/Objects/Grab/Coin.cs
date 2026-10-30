@@ -220,6 +220,7 @@ namespace CloudberryKingdom.InGameObjects
             if (Col)
             {
                 if (CloudberryKingdom.Levels.Level.ReplayProbe) GeneratorApi.OnCoin(this, bob);
+                if (EmbedMode.Active) EmbedMode.OnCoin(this, bob);
                 Die();
 
                 if (Core.MyLevel.PlayMode == 0 && !Core.MyLevel.Watching)

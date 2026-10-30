@@ -57,6 +57,9 @@
     <Compile Include="MainClass\BrowserPlayState.cs" />
     <Compile Include="MainClass\GeneratorApi.cs" />
     <Compile Include="MainClass\GeneratorReplay.cs" />
+    <Compile Include="MainClass\GeneratorReroll.cs" />
+    <Compile Include="MainClass\EmbedMode.cs" />
+    <Compile Include="MainClass\EmbedTest.cs" />
     <Compile Include="MainClass\GeneratorSettings.cs" />
     <Compile Include="MainClass\PlatformSuppression.cs" />
     <Compile Include="Engine\Chunk.cs" />

@@ -673,6 +673,7 @@ namespace CloudberryKingdom.Bobs
             MyCapeType = Cape.CapeType.Normal;
 
             MyPhsx = type.Clone();
+            if (EmbedMode.Active) EmbedMode.ApplyAbilities(MyPhsx);
 
             MyPhsx.Init(this);
             MakeCape(MyCapeType);

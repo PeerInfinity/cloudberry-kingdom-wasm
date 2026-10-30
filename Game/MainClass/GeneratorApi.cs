@@ -36,6 +36,11 @@ namespace CloudberryKingdom
     {
         public const string Format = "ck-level/1";
         public const string Format2 = "ck-level/2";
+        /// <summary>
+        /// The generator's version in ck-level/2 documents (engine.generator): bumped when the same request deliberately
+        /// generates a different level (a host's stored document hashes then stop matching, and it regenerates).
+        /// </summary>
+        public const string GeneratorVersion = "ck-gen/1";
         public const int PhysicsHz = 60;
         public const string Units = "world (game px)";
 
@@ -74,6 +79,10 @@ namespace CloudberryKingdom
                 switch (args[i])
                 {
                     case "--api": ApiMode = true; break;
+                    case "--embed": ApiMode = true; EmbedMode.Active = true; break;
+#if !BROWSER
+                    case "--embed-test": ApiMode = true; EmbedMode.Active = true; EmbedTest.Script = args[++i]; break;
+#endif
                     case "--generate": ApiMode = true; NativeArgs = args[++i]; if (NativeArgs.StartsWith("@")) NativeArgs = File.ReadAllText(NativeArgs.Substring(1)); break;
                     case "--out": NativeOut = args[++i]; break;
                     case "--repeat": NativeRepeat = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
@@ -115,6 +124,7 @@ namespace CloudberryKingdom
                         string sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(json))).Substring(0, 12);
                         times.AppendFormat(CultureInfo.InvariantCulture, "{0}generate={1:F1}ms export={2:F1}ms replay={3:F1}ms verify={4:F1}ms sha256={5}",
                             times.Length == 0 ? "" : "\n", LastGenerateMs, LastExportMs, LastReplayMs, LastVerifyMs, sha);
+                        if (LastRerollReport != "null") times.AppendFormat(CultureInfo.InvariantCulture, " rerollSearchMs={0:F1} rerollTotalMs={1:F1} reroll={2}", LastRerollSearchMs, LastRerollTotalMs, LastRerollReport);
                         if (i == 0) outs.Add(json);
                     }
                 if (calls.Count > 1) json = "[" + string.Join(",\n", outs) + "]";
@@ -123,6 +133,9 @@ namespace CloudberryKingdom
                 if (NativeOut != null) File.WriteAllText(NativeOut + ".timing.txt", times.ToString());
                 Console.WriteLine("[generator-api] wrote " + (NativeOut ?? "stdout"));
             }
+#if !BROWSER
+            if (EmbedTest.Script != null) { EmbedTest.Out = NativeOut ?? "embed-test.json"; EmbedTest.Run(); Tools.TheGame.Exit(); return; }
+#endif
             if (NativeArgs != null || NativeSchemaOut != null) Tools.TheGame.Exit();
         }
 
@@ -144,8 +157,8 @@ namespace CloudberryKingdom
         [JSExport]
         public static string LastTimings()
         {
-            return string.Format(CultureInfo.InvariantCulture, "{{\"generateMs\":{0:F2},\"exportMs\":{1:F2},\"replayMs\":{2:F2},\"verifyMs\":{3:F2}}}",
-                LastGenerateMs, LastExportMs, LastReplayMs, LastVerifyMs);
+            return string.Format(CultureInfo.InvariantCulture, "{{\"generateMs\":{0:F2},\"exportMs\":{1:F2},\"replayMs\":{2:F2},\"verifyMs\":{3:F2},\"rerollSearchMs\":{5:F2},\"rerollTotalMs\":{6:F2},\"reroll\":{4}}}",
+                LastGenerateMs, LastExportMs, LastReplayMs, LastVerifyMs, LastRerollReport, LastRerollSearchMs, LastRerollTotalMs);
         }
 #endif
 
@@ -212,6 +225,9 @@ namespace CloudberryKingdom
             public bool Settings = true;
             public bool Verify;
             public List<string> Held;
+            public int[] Rerolls;
+            public bool RerollSearch;
+            public int RerollMaxAttempts = DefaultRerollMaxAttempts;
             public string Raw;
         }
 
@@ -248,6 +264,8 @@ namespace CloudberryKingdom
             Arg("statics", "object", null, "{\"Class.Field\": value} the generator's static settings (schema.statics), set for this call only and restored after");
             Arg("replayHero", "object", null, "BobPhsx members changed on the hero for every replay (e.g. {NumJumps:1}, {JetPack:false})");
             Arg("held", "array", null, "platform items held for an extra replay of every piece (schema.upgrades.platformItems)");
+            Arg("rerolls", "array", null, "per piece, the reroll attempt (0 = as the seed makes it; a > 0 re-seeds that piece with " + RerollScheme + "'s seed of (seed, piece, a))");
+            Arg("reroll", "bool|object", false, "search rerolls until every piece's new items are real gates (S_k passes, each control fails); {maxAttempts} (default " + DefaultRerollMaxAttempts + "); returns the resolved request's document; refusal RerollExhausted");
             Arg("verify", "bool", false, "nested-piece verifier: each piece replayed with S_k held, and with each new item of S_k dropped");
             Arg("coins", "bool", true, "v2: the coins section (witness tick per coin)");
             Arg("settings", "bool", true, "v2: each piece's resolved style and generator parameters in the document");
@@ -333,6 +351,25 @@ namespace CloudberryKingdom
                             a.V2 = true;
                             if (p.Value.ValueKind == JsonValueKind.Null) a.Held = null;
                             else { a.Held = new List<string>(); foreach (var e in p.Value.EnumerateArray()) a.Held.Add(e.GetString()); }
+                            break;
+                        case "rerolls":
+                            a.V2 = true;
+                            a.Rerolls = p.Value.EnumerateArray().Select(e => e.GetInt32()).ToArray();
+                            if (a.Rerolls.Any(r => r < 0)) throw new ArgumentException("rerolls: attempts are >= 0");
+                            break;
+                        case "reroll":
+                            a.V2 = true;
+                            if (p.Value.ValueKind == JsonValueKind.True || p.Value.ValueKind == JsonValueKind.False) a.RerollSearch = p.Value.GetBoolean();
+                            else
+                            {
+                                a.RerollSearch = true;
+                                foreach (var q in p.Value.EnumerateObject())
+                                {
+                                    if (q.Name == "maxAttempts") a.RerollMaxAttempts = q.Value.GetInt32();
+                                    else throw new ArgumentException("unknown reroll argument '" + q.Name + "'");
+                                }
+                                if (a.RerollMaxAttempts < 1) throw new ArgumentException("reroll.maxAttempts: at least 1");
+                            }
                             break;
                         default: throw new ArgumentException("unknown argument '" + p.Name + "'");
                     }
@@ -476,6 +513,8 @@ namespace CloudberryKingdom
         public static string Generate(string argsJson)
         {
             LastGenerateMs = LastExportMs = LastReplayMs = LastVerifyMs = 0;
+            LastRerollReport = "null";
+            LastRerollSearchMs = LastRerollTotalMs = 0;
 
             GameData holdGame = Tools.CurGameData;
             Level holdLevel = Tools.CurLevel;
@@ -487,43 +526,31 @@ namespace CloudberryKingdom
             GameData game = null;
             Args a = null;
             List<KeyValuePair<FieldInfo, object>> holdStatics = null;
+            bool holdGenerating = Generating;
+            bool holdNoDouble = LevelSeedData.NoDoublePaths;
+            Generating = true;
             try
             {
                 NonFinite = 0;
                 a = ParseArgs(argsJson);
                 if (!Ready) throw new InvalidOperationException("not ready: content still loading");
+                if (a.RerollSearch)
+                {
+                    if (a.Rerolls != null) throw new ArgumentException("reroll and rerolls: give one (reroll searches for rerolls)");
+                    return GenerateWithReroll(a);
+                }
                 PlatformSuppression.Disable();
 
+                // ck-level/2 pins the generator's globals a page may have changed: the attract-mode ScreenSaver sets
+                // NoDoublePaths false. A request's statics still set it for the call.
+                if (a.V2) LevelSeedData.NoDoublePaths = true;
                 if (a.Statics != null) holdStatics = GeneratorSettings.ApplyStatics(a.Statics.Value);
 
                 var sw = Stopwatch.StartNew();
 
-                // Every random draw of a generation descends from GlobalRnd (LevelSeedData's constructor seeds its own Rand from it,
-                // DifficultyGroups draws from it directly), so the seed argument re-seeds it.
-                Tools.GlobalRnd = new Rand(a.Seed);
-
                 var clamped = new List<string>();
-                BobPhsx hero = a.HeroCustom != null ? MakeCustomHero(a.HeroCustom.Value, clamped) : ResolveHero(a.Hero);
-                LevelGeometry geometry = (LevelGeometry)Enum.Parse(typeof(LevelGeometry), a.Geometry, true);
-
-                LevelSeedData data;
-                if (!a.V2)
-                    data = RegularLevel.HeroLevel(a.Difficulty, hero, null, geometry, a.Length, false);
-                else
-                {
-                    if (a.NumPieces > 1 && geometry != LevelGeometry.Right)
-                        throw new ArgumentException("more than one piece needs geometry Right (the Custom Level menu forces vertical levels to one piece)");
-                    int pieceLength = a.PieceLength > 0 ? a.PieceLength : SplitLength(a.Length, a.NumPieces);
-                    LevelSeedData made = null;
-                    data = RegularLevel.HeroLevel(a.Difficulty, hero, null, geometry, a.NumPieces, pieceLength, false,
-                        d => { made = d; if (a.LevelSeed != null) GeneratorSettings.Apply(d, a.LevelSeed.Value, "levelSeed", GeneratorSettings.LevelSeedControlled); },
-                        custom => piece => ModPiece(piece, custom, a, () => made));
-                    // The Custom Level menu's next step: the LevelSeedData flags that act through the pieces (HasWall
-                    // adds a StyleData.MyModParams to piece 0) or through PostMake (run when a game loads the level).
-                    data.ProcessSpecial();
-                }
-                data.SetTileSet(a.TileSet);
-                data.NoMusicStart = true;
+                LevelGeometry geometry;
+                LevelSeedData data = BuildSeedData(a, clamped, out geometry);
 
                 game = new NormalGameData();
                 game.Init();
@@ -567,6 +594,7 @@ namespace CloudberryKingdom
 
                     w.WriteStartObject("engine");
                     w.WriteString("build", Environment.GetEnvironmentVariable("CK_BUILD") ?? "unknown");
+                    if (a.V2) w.WriteString("generator", GeneratorVersion);
                     w.WriteNumber("physicsHz", PhysicsHz);
                     w.WriteString("units", Units);
                     w.WriteEndObject();
@@ -574,7 +602,7 @@ namespace CloudberryKingdom
                     w.WriteStartObject("level");
                     w.WriteString("tileset", data.MyTileSet == null ? null : data.MyTileSet.Name);
                     w.WriteString("heroResolved", level.DefaultHeroType.GetType().Name);
-                    w.WriteNumber("seedDrawn", data.Seed);
+                    w.WriteNumber("seedDrawn", data.MakeBaseSeed);
                     WriteVec(w, "bl", level.BL);
                     WriteVec(w, "tr", level.TR);
                     w.WriteNumber("par", level.Par);
@@ -645,6 +673,14 @@ namespace CloudberryKingdom
                 {
                     w.WriteStartObject();
                     w.WriteString("format", a != null && a.V2 ? Format2 : Format);
+                    if (e is RerollExhaustedException)
+                    {
+                        // The named refusal: the message starts "RerollExhausted:"; the search's report rides along.
+                        w.WriteString("error", e.Message);
+                        w.WritePropertyName("reroll");
+                        using (var rep = JsonDocument.Parse(LastRerollReport)) rep.RootElement.WriteTo(w);
+                    }
+                    else
                     w.WriteString("error", e.GetType().Name + ": " + e.Message);
                     w.WriteEndObject();
                 }
@@ -658,12 +694,54 @@ namespace CloudberryKingdom
                 Level.ReplayRunPastEnd = false;
                 Probe = null;
                 if (holdStatics != null) foreach (var kv in holdStatics) kv.Key.SetValue(null, kv.Value);
+                LevelSeedData.NoDoublePaths = holdNoDouble;
+                Generating = holdGenerating;
                 if (holdSuppression) PlatformSuppression.SetHeld(holdHeld); else PlatformSuppression.Disable();
                 if (game != null) game.Release();
                 Tools.CurGameData = holdGame;
                 Tools.CurLevel = holdLevel;
                 Tools.GlobalRnd = holdRnd;
             }
+        }
+
+        /// <summary>
+        /// The level's seed data from the arguments, as a generation makes it (also the embedded page's playable level:
+        /// EmbedMode makes its level from this same path). Re-seeds Tools.GlobalRnd from the seed.
+        /// </summary>
+        static LevelSeedData BuildSeedData(Args a, List<string> clamped, out LevelGeometry geometry)
+        {
+            // Every random draw of a generation descends from GlobalRnd (LevelSeedData's constructor seeds its own Rand from it,
+            // DifficultyGroups draws from it directly), so the seed argument re-seeds it.
+            Tools.GlobalRnd = new Rand(a.Seed);
+
+            BobPhsx hero = a.HeroCustom != null ? MakeCustomHero(a.HeroCustom.Value, clamped) : ResolveHero(a.Hero);
+            geometry = (LevelGeometry)Enum.Parse(typeof(LevelGeometry), a.Geometry, true);
+
+            LevelSeedData data;
+            if (!a.V2)
+                data = RegularLevel.HeroLevel(a.Difficulty, hero, null, geometry, a.Length, false);
+            else
+            {
+                if (a.NumPieces > 1 && geometry != LevelGeometry.Right)
+                    throw new ArgumentException("more than one piece needs geometry Right (the Custom Level menu forces vertical levels to one piece)");
+                int pieceLength = a.PieceLength > 0 ? a.PieceLength : SplitLength(a.Length, a.NumPieces);
+                LevelSeedData made = null;
+                data = RegularLevel.HeroLevel(a.Difficulty, hero, null, geometry, a.NumPieces, pieceLength, false,
+                    d => { made = d; if (a.LevelSeed != null) GeneratorSettings.Apply(d, a.LevelSeed.Value, "levelSeed", GeneratorSettings.LevelSeedControlled); },
+                    custom => piece => ModPiece(piece, custom, a, () => made));
+                // The Custom Level menu's next step: the LevelSeedData flags that act through the pieces (HasWall
+                // adds a StyleData.MyModParams to piece 0) or through PostMake (run when a game loads the level).
+                data.ProcessSpecial();
+            }
+            data.SetTileSet(a.TileSet);
+            data.NoMusicStart = true;
+            if (a.Rerolls != null)
+            {
+                int pieces = data.PieceSeeds.Count(p => p.Ladder == Level.LadderType.None);
+                if (a.Rerolls.Length != pieces) throw new ArgumentException("rerolls: " + a.Rerolls.Length + " attempts for " + pieces + " pieces");
+                data.PieceRerolls = a.Rerolls;
+            }
+            return data;
         }
 
         static void WriteHeroAbility(Utf8JsonWriter w, string name, BobPhsx hero)
@@ -762,6 +840,14 @@ namespace CloudberryKingdom
                 else
                 {
                     w.WriteNumber("piece", p.MyPieceIndex);
+                    if (data.PieceRerolls != null && p.MyPieceIndex >= 0 && data.PieceRerolls[p.MyPieceIndex] > 0)
+                    {
+                        w.WriteStartObject("reroll");
+                        w.WriteString("scheme", RerollScheme);
+                        w.WriteNumber("attempt", data.PieceRerolls[p.MyPieceIndex]);
+                        w.WriteNumber("seed", RerollSeed(data.MakeBaseSeed, p.MyPieceIndex, data.PieceRerolls[p.MyPieceIndex]));
+                        w.WriteEndObject();
+                    }
                     w.WriteNumber("paths", p.Paths);
                     WriteUpgrades(w, "upgrades", p.MyUpgrades1);
                     w.WriteStartArray("items");
