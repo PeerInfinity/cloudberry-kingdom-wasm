@@ -12,7 +12,7 @@ export const DEFAULT_PACKS_BASE = 'https://peerinfinity.github.io/Archipelago-CC
 const PACK_ID = 'archipelago';
 // The largest frame first: the 64×64 key (Archipelago-CC ⚖ R17) draws about 1:1 at the 1280 buffer; a pack without it
 // still has the 16×16 one (Seedling's).
-const SPRITE_KEYS = ['archipelago:pickup/item@64', 'archipelago:pickup/item'];
+const SPRITE_KEYS = ['archipelago:pickup/item-64', 'archipelago:pickup/item'];
 const FETCH_TIMEOUT_MS = 8000;
 
 // Texture side (texels) and the size the game draws it at (world units; an ordinary coin is a 76 wide circle).
