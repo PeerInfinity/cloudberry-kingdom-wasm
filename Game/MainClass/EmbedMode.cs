@@ -25,7 +25,11 @@ namespace CloudberryKingdom
     /// level from the same arguments by the same path (GeneratorApi.BuildSeedData), checks the played level against the
     /// document's coins, and then:
     ///   - a CHECK coin's collection queues a "location" event (once per coin per configure);
-    ///   - Up at the end door queues a "door" event (once per arrival at the door) — where the exit menu will hang;
+    ///   - Up at the end door queues a "door" event {door:'end'} (once per arrival at the door; the page's exit menu), and
+    ///     Up at the START door one with door:'start' (the way back; armed only once the bob has left the start door's reach,
+    ///     so the first jump of a level does not open it); RearmDoors lets the page re-arm both after its menu closes;
+    ///   - check coins are drawn by DrawCheckCoin: the page's texture (the Archipelago logo from the art library, or its own
+    ///     fallback), an outline once the host says the check is checked (SetChecked / Play's checked);
     ///   - held items: platform items through PlatformSuppression, the Jetpack ability on the level's hero (zeroed
     ///     when the level's hero has a jetpack and the Jetpack item is not held);
     ///   - the bot (BotWalkTo): respawn at the goal's piece checkpoint and play that piece's recording (the player's own
@@ -48,6 +52,8 @@ namespace CloudberryKingdom
         /// </summary>
         public const float CoinMatchDistance = 30;
         public const string JetpackItem = "Jetpack";
+        /// <summary>Up held, as the door's prompt reads it (Door.Interact: xVec.Y > .85).</summary>
+        public const float DoorUpThreshold = .85f;
 
         public static bool Active;
 
@@ -61,6 +67,8 @@ namespace CloudberryKingdom
             public Vector2 StartPos;
             public Coin Coin;
             public bool Sent;
+            /// <summary>The host says this check is checked (Play's checked, SetChecked): drawn as an outline.</summary>
+            public bool Checked;
         }
 
         class BotWalk
@@ -77,7 +85,10 @@ namespace CloudberryKingdom
         static GameData PlayGame;
         static bool LevelHeroJetpack, JetpackHeld;
         static List<string> HeldPlatforms = new List<string>();
-        static bool DoorArmed = true;
+        static bool DoorArmed = true, StartDoorArmed;
+        /// <summary>RearmDoors: both doors re-arm at the next step on which no bob holds Up.</summary>
+        static bool RearmPending;
+        static int LastPhsxStep;
         static BotWalk Bot;
         static int Configures;
         /// <summary>Pieces after the first keep the engine's CamStartPos (0,0); when set, Play gives each its start's camera.</summary>
@@ -119,7 +130,7 @@ namespace CloudberryKingdom
                                 Sent = false,
                             });
                         }
-                    foreach (var c in checks) c.Sent = checkedNames.Contains(c.Name);
+                    foreach (var c in checks) c.Sent = c.Checked = checkedNames.Contains(c.Name);
 
                     Level level = GeneratorApi.MakePlayableLevel(generate, out PlayGame);
                     PlayLevel = level;
@@ -154,6 +165,8 @@ namespace CloudberryKingdom
                     Events.Clear();
                     Bot = null;
                     DoorArmed = true;
+                    StartDoorArmed = false;
+                    RearmPending = false;
                     Configures++;
 
                     BobPhsxNormal hero = level.DefaultHeroType as BobPhsxNormal;
@@ -166,7 +179,8 @@ namespace CloudberryKingdom
                       .Append(",\"coins\":").Append(coins)
                       .Append(",\"checks\":").Append(Checks.Count)
                       .Append(",\"heroJetpack\":").Append(LevelHeroJetpack ? "true" : "false")
-                      .Append(",\"camStartFix\":").Append(CamStartFix ? "true" : "false");
+                      .Append(",\"camStartFix\":").Append(CamStartFix ? "true" : "false")
+                      .Append(",\"startDoor\":").Append(level.StartDoor != null ? "true" : "false");
                     sb.Append('}');
                     return sb.ToString();
                 }
@@ -183,6 +197,8 @@ namespace CloudberryKingdom
         {
             ILevelConnector door = (ILevelConnector)level.FindIObject(LevelConnector.EndOfLevelCode);
             if (door != null) door.OnOpen = d => OnDoor(d, false);
+            Door start = level.StartDoor;
+            if (start != null) start.OnOpen = d => OnStartDoor(d);
             level.MyGame.AddGameObject(new EmbedDriver());
 
             if (CamStartFix)
@@ -278,7 +294,108 @@ namespace CloudberryKingdom
         {
             if (!DoorArmed) return;
             DoorArmed = false;
-            Events.Add("{\"kind\":\"door\",\"bot\":" + (bot ? "true" : "false") + "}");
+            Events.Add("{\"kind\":\"door\",\"door\":\"end\",\"bot\":" + (bot ? "true" : "false") + "}");
+        }
+
+        static void OnStartDoor(Door door)
+        {
+            if (!StartDoorArmed || Bot != null) return;
+            StartDoorArmed = false;
+            Events.Add("{\"kind\":\"door\",\"door\":\"start\",\"bot\":false}");
+        }
+
+        /// <summary>The page's exit menu closed: Up at a door opens it again (once Up is no longer held).</summary>
+        public static void RearmDoors() { RearmPending = true; }
+
+        /// <summary>json: [check names] the host says are checked (drawn as outlines); every other check is drawn unchecked.</summary>
+        public static string SetChecked(string json)
+        {
+            try
+            {
+                var names = new HashSet<string>();
+                using (var doc = JsonDocument.Parse(json))
+                    foreach (var n in doc.RootElement.EnumerateArray()) names.Add(n.GetString());
+                foreach (var c in Checks) c.Checked = names.Contains(c.Name);
+                return "{\"ok\":true,\"checked\":" + Checks.Count(c => c.Checked) + "}";
+            }
+            catch (Exception e)
+            {
+                return "{\"ok\":false,\"error\":" + GeneratorApi.JsonStr(e.Message) + "}";
+            }
+        }
+
+        // -------------------------------------------------------------------------------------------------------------
+        // The check coins' look
+
+        /// <summary>The page's check-coin textures (premultiplied RGBA): unchecked and checked (outline). Null = the default look.</summary>
+        static CoreEngine.CoreTexture CheckTex, CheckedTex;
+        /// <summary>World size the page's texture is drawn at (an ordinary coin is a 76 wide circle).</summary>
+        static float CheckTexSize = 128;
+        /// <summary>Check coins drawn so far (one per coin per drawn frame), by look: a test instrument for the status.</summary>
+        static long DrawnUnchecked, DrawnChecked;
+        /// <summary>The look without a texture from the page: a larger purple coin; checked = a purple ring.</summary>
+        public const float FallbackRadius = 52, FallbackRing = 12;
+        static readonly Color FallbackColor = new Color(150, 70, 230, 255);
+
+        /// <summary>
+        /// json: {w, h, size, fill: base64 RGBA, outline: base64 RGBA} (premultiplied alpha), or {clear:true} for the default
+        /// look. The page makes these from the art library's Archipelago logo, or its own fallback when that fetch fails.
+        /// </summary>
+        public static string SetCheckLook(string json)
+        {
+            try
+            {
+                using (var doc = JsonDocument.Parse(json))
+                {
+                    JsonElement root = doc.RootElement, e;
+                    if (root.TryGetProperty("clear", out e) && e.GetBoolean()) { CheckTex = CheckedTex = null; return "{\"ok\":true}"; }
+                    int w = root.GetProperty("w").GetInt32(), h = root.GetProperty("h").GetInt32();
+                    if (root.TryGetProperty("size", out e)) CheckTexSize = e.GetSingle();
+                    CheckTex = MakeTexture(w, h, Convert.FromBase64String(root.GetProperty("fill").GetString()));
+                    CheckedTex = MakeTexture(w, h, Convert.FromBase64String(root.GetProperty("outline").GetString()));
+                    return "{\"ok\":true,\"w\":" + w + ",\"h\":" + h + "}";
+                }
+            }
+            catch (Exception e)
+            {
+                return "{\"ok\":false,\"error\":" + GeneratorApi.JsonStr(e.GetType().Name + ": " + e.Message) + "}";
+            }
+        }
+
+        static CoreEngine.CoreTexture MakeTexture(int w, int h, byte[] rgba)
+        {
+            if (rgba.Length != w * h * 4) throw new ArgumentException("texture: " + rgba.Length + " bytes for " + w + "x" + h);
+            var tex = new Microsoft.Xna.Framework.Graphics.Texture2D(Tools.Device, w, h);
+            tex.SetData(rgba);
+            return new CoreEngine.CoreTexture { Tex = tex, Width = w, Height = h, FromCode = true, Name = "EmbedCheckCoin" };
+        }
+
+        /// <summary>Coin.Draw (box drawing): true when the coin is a check coin of the played level and was drawn here.</summary>
+        public static bool DrawCheckCoin(Coin coin)
+        {
+            if (PlayLevel == null || coin.Core.MyLevel != PlayLevel) return false;
+            CheckCoin check = null;
+            foreach (var c in Checks) if (c.StartPos == coin.Core.StartData.Position) { check = c; break; }
+            if (check == null) return false;
+            CoreEngine.CoreTexture tex = check.Checked ? CheckedTex : CheckTex;
+            if (check.Checked) DrawnChecked++; else DrawnUnchecked++;
+            if (tex != null)
+                Tools.QDrawer.DrawSquareDot(coin.Pos, Color.White, CheckTexSize, tex, Tools.BasicEffect);
+            else if (check.Checked)
+            {
+                // A ring: the purple disc's edge, drawn as segments of a circle of short lines.
+                const int n = 24;
+                float r = FallbackRadius - FallbackRing / 2;
+                for (int i = 0; i < n; i++)
+                {
+                    double a0 = 2 * Math.PI * i / n, a1 = 2 * Math.PI * (i + 1) / n;
+                    Tools.QDrawer.DrawLine(coin.Pos + r * new Vector2((float)Math.Cos(a0), (float)Math.Sin(a0)),
+                        coin.Pos + r * new Vector2((float)Math.Cos(a1), (float)Math.Sin(a1)), FallbackColor, FallbackRing);
+                }
+            }
+            else
+                Tools.QDrawer.DrawCircle(coin.Pos, FallbackRadius, FallbackColor);
+            return true;
         }
 
         // -------------------------------------------------------------------------------------------------------------
@@ -374,9 +491,28 @@ namespace CloudberryKingdom
             if (level == null || Tools.CurLevel != level) return;
             foreach (Bob bob in level.Bobs) ApplyAbilities(bob.MyPhsx);
 
-            // The door event re-arms once no bob is in reach of the door.
-            Door door = level.FinalDoor;
+            // A door event re-arms once no bob is in reach of the door (the start door: armed for the first time so).
+            Door door = level.FinalDoor, start = level.StartDoor;
             if (!DoorArmed && door != null && !level.Bobs.Any(b => door.BobInReach(b))) DoorArmed = true;
+            // A respawn (the level's step count starts again) puts the bob back at its start: the start door disarms.
+            if (level.CurPhsxStep < LastPhsxStep) StartDoorArmed = false;
+            LastPhsxStep = level.CurPhsxStep;
+            if (!StartDoorArmed && start != null && level.Bobs.Count > 0 && !level.SetToReset && !level.Bobs.Any(b => start.BobInReach(b))) StartDoorArmed = true;
+            if (RearmPending && !level.Bobs.Any(b => b.CurInput.xVec.Y > .85f))
+            {
+                RearmPending = false;
+                DoorArmed = true;
+                if (start != null) StartDoorArmed = true;
+            }
+            // The player's Up in reach of a door (as the door's own prompt reads it, xVec.Y > .85). Door.Interact's OnOpen
+            // is also hooked, but it is gated by engine state the embedded level does not always have (the keyboard-last
+            // flag, a temporary block after the bob is moved), so the embed reads the input itself.
+            foreach (Bob bob in level.Bobs)
+            {
+                if (bob.CompControl || bob.CodeControl || bob.Dead || bob.Dying || bob.CurInput.xVec.Y <= DoorUpThreshold) continue;
+                if (door != null && DoorArmed && door.BobInReach(bob)) OnDoor(door, false);
+                else if (start != null && StartDoorArmed && start.BobInReach(bob)) OnStartDoor(start);
+            }
 
             BotWalk walk = Bot;
             if (walk == null) return;
@@ -470,6 +606,16 @@ namespace CloudberryKingdom
                       .Append(bob.Core.Data.Position.Y.ToString("R", CultureInfo.InvariantCulture)).Append("],\"dead\":")
                       .Append(bob.Dead || bob.Dying ? "true" : "false").Append(",\"compControl\":").Append(bob.CompControl ? "true" : "false")
                       .Append(",\"jetpack\":").Append(bob.MyPhsx is BobPhsxNormal && ((BobPhsxNormal)bob.MyPhsx).JetPack ? "true" : "false").Append('}');
+                if (level.StartDoor != null)
+                    sb.Append(",\"startDoor\":[").Append(level.StartDoor.Pos.X.ToString("R", CultureInfo.InvariantCulture)).Append(',')
+                      .Append(level.StartDoor.Pos.Y.ToString("R", CultureInfo.InvariantCulture)).Append("],\"startDoorArmed\":")
+                      .Append(StartDoorArmed ? "true" : "false").Append(",\"startDoorLocked\":").Append(level.StartDoor.Locked ? "true" : "false");
+                sb.Append(",\"doorArmed\":").Append(DoorArmed ? "true" : "false");
+                if (level.FinalDoor != null) sb.Append(",\"doorLocked\":").Append(level.FinalDoor.Locked ? "true" : "false");
+                sb.Append(",\"playMode\":").Append(level.PlayMode);
+                if (bob != null)
+                    sb.Append(",\"input\":{\"y\":").Append(bob.CurInput.xVec.Y.ToString("R", CultureInfo.InvariantCulture))
+                      .Append(",\"keyboardUsedLast\":").Append(bob.GetPlayerData() != null && bob.GetPlayerData().KeyboardUsedLast ? "true" : "false").Append('}');
                 if (level.FinalDoor != null)
                     sb.Append(",\"door\":[").Append(level.FinalDoor.Pos.X.ToString("R", CultureInfo.InvariantCulture)).Append(',')
                       .Append(level.FinalDoor.Pos.Y.ToString("R", CultureInfo.InvariantCulture)).Append(']');
@@ -479,6 +625,7 @@ namespace CloudberryKingdom
                     var c = Checks[i];
                     if (i > 0) sb.Append(',');
                     sb.Append("{\"name\":").Append(GeneratorApi.JsonStr(c.Name)).Append(",\"sent\":").Append(c.Sent ? "true" : "false")
+                      .Append(",\"checked\":").Append(c.Checked ? "true" : "false")
                       .Append(",\"piece\":").Append(c.Piece).Append(",\"tick\":").Append(c.Tick).Append('}');
                 }
                 sb.Append(']');
@@ -487,6 +634,9 @@ namespace CloudberryKingdom
                 else sb.Append("{\"kind\":").Append(GeneratorApi.JsonStr(Bot.Kind)).Append(",\"id\":").Append(GeneratorApi.JsonStr(Bot.Id))
                        .Append(",\"armed\":").Append(Bot.Armed ? "true" : "false").Append(",\"steps\":").Append(Bot.Steps).Append('}');
                 sb.Append(",\"items\":").Append(ItemsJson());
+                sb.Append(",\"look\":{\"texture\":").Append(CheckTex != null ? "true" : "false").Append(",\"size\":")
+                  .Append(CheckTexSize.ToString("R", CultureInfo.InvariantCulture)).Append(",\"drawnUnchecked\":").Append(DrawnUnchecked)
+                  .Append(",\"drawnChecked\":").Append(DrawnChecked).Append('}');
             }
             sb.Append('}');
             return sb.ToString();
@@ -500,6 +650,9 @@ namespace CloudberryKingdom
         [JSExport] public static void StopNow() { Stop(); }
         [JSExport] public static string TakeEventsJson() { return TakeEvents(); }
         [JSExport] public static string Status() { return StatusJson(); }
+        [JSExport] public static void RearmDoorsNow() { RearmDoors(); }
+        [JSExport] public static string SetCheckedJson(string json) { return SetChecked(json); }
+        [JSExport] public static string SetCheckLookJson(string json) { return SetCheckLook(json); }
 #endif
     }
 

@@ -1130,11 +1130,14 @@ namespace CloudberryKingdom.Levels
             foreach (ObjectBase obj in DrawLayer[i])
                 if (obj.Core.Show)
                 {
-                    // An unheld platform item is drawn faint (PlatformSuppression).
+                    // An unheld platform item is drawn as "not there yet" (PlatformSuppression): dashed outlines over a
+                    // faint fill, anything else faint.
                     if (PlatformSuppression.IsSuppressed(obj.Core))
                     {
                         Tools.QDrawer.FadeScale = PlatformSuppression.DrawAlpha;
+                        Tools.QDrawer.Unheld = true;
                         obj.Draw();
+                        Tools.QDrawer.Unheld = false;
                         Tools.QDrawer.FadeScale = 1;
                     }
                     else

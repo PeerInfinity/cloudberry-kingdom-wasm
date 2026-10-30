@@ -163,6 +163,14 @@ namespace CoreEngine
 
         /// <summary>Every quad's colour is scaled by this while it is below 1 (premultiplied alpha: fainter). Level draw sets it around an unheld platform item.</summary>
         public float FadeScale = 1;
+
+        /// <summary>
+        /// Set by the level draw around an unheld platform item (PlatformSuppression): filled boxes are drawn as a faint fill
+        /// inside a dashed outline and plain lines are dashed, so the platform reads as "not there yet" rather than darker.
+        /// </summary>
+        public bool Unheld;
+        bool DrawingUnheld;
+        public const float UnheldFillAlpha = .14f, UnheldLineWidth = 9, UnheldDash = 30, UnheldGap = 22;
         public int N;
         public int TrianglesInBuffer;
         private int i;
@@ -392,6 +400,8 @@ namespace CoreEngine
 
         public void DrawFilledBox(Vector2 BL, Vector2 TR, Color color)
         {
+            if (Unheld && !DrawingUnheld) { DrawUnheldBox(BL, TR, color); return; }
+
             LineQuad.MyEffect = DefaultEffect;
             LineQuad.MyEffect = Tools.BasicEffect;;
             LineQuad.MyTexture = DefaultTexture;
@@ -451,6 +461,14 @@ namespace CoreEngine
         }
         public void DrawLine(Vector2 x1, Vector2 x2, Color color, float width, CoreTexture Tex, CoreEffect fx, float RepeatWidth, int Dir, float BlendAddRatio, float v_shift, bool Wrap)
         {
+            if (Unheld && !DrawingUnheld && Tex == null)
+            {
+                bool hold = DrawingUnheld; float holdFade = FadeScale;
+                DrawingUnheld = true; FadeScale = 1;
+                DrawDashedLine(x1, x2, color, width, fx, BlendAddRatio);
+                DrawingUnheld = hold; FadeScale = holdFade;
+                return;
+            }
 #if BROWSER
             Color StraightColor = color;
 #endif
@@ -593,6 +611,33 @@ namespace CoreEngine
             DrawQuad(ref LineQuad);
 
             LineQuad.BlendAddRatio = 0;
+        }
+
+        /// <summary>An unheld platform's box: a faint fill and a dashed outline in the platform's own colour.</summary>
+        void DrawUnheldBox(Vector2 BL, Vector2 TR, Color color)
+        {
+            float holdFade = FadeScale;
+            DrawingUnheld = true; FadeScale = 1;
+            DrawFilledBox(BL, TR, new Color(color.R, color.G, color.B, (byte)(color.A * UnheldFillAlpha)));
+            Color line = new Color(color.R, color.G, color.B, (byte)255);
+            Vector2 TL = new Vector2(BL.X, TR.Y), BR = new Vector2(TR.X, BL.Y);
+            Vector2 inset = new Vector2(UnheldLineWidth / 2, UnheldLineWidth / 2);
+            Vector2 bl = BL + inset, tr = TR - inset, tl = new Vector2(bl.X, tr.Y), br = new Vector2(tr.X, bl.Y);
+            DrawDashedLine(tl, tr, line, UnheldLineWidth, null, 0);
+            DrawDashedLine(tr, br, line, UnheldLineWidth, null, 0);
+            DrawDashedLine(br, bl, line, UnheldLineWidth, null, 0);
+            DrawDashedLine(bl, tl, line, UnheldLineWidth, null, 0);
+            DrawingUnheld = false; FadeScale = holdFade;
+        }
+
+        void DrawDashedLine(Vector2 x1, Vector2 x2, Color color, float width, CoreEffect fx, float BlendAddRatio)
+        {
+            Vector2 d = x2 - x1;
+            float length = d.Length();
+            if (length < 1) return;
+            d /= length;
+            for (float t = 0; t < length; t += UnheldDash + UnheldGap)
+                DrawLine(x1 + d * t, x1 + d * Math.Min(length, t + UnheldDash), color, width, null, fx, 1, 0, BlendAddRatio, 0, false);
         }
 
         public void DrawCircle(Vector2 x, float r, Color color)

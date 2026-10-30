@@ -16,7 +16,7 @@ namespace CloudberryKingdom
     ///   {"do":"items", "platforms":[…], "jetpack":bool}
     ///   {"do":"bot", "goal":{"kind":"pickup"|"portal","id":…}, "options":{…}}
     ///   {"do":"run", "steps":n} | {"do":"until", "event":"location"|"door"|"bot", "max":n}
-    ///   {"do":"status"} | {"do":"stop"}
+    ///   {"do":"status"} | {"do":"stop"} | {"do":"checked", "names":[…]} | {"do":"rearm"}
     /// Every step's result and every event go into the log (a development instrument; the page is what ships).
     /// </summary>
     public static class EmbedTest
@@ -40,6 +40,8 @@ namespace CloudberryKingdom
                             case "items": entry["result"] = JsonNode.Parse(EmbedMode.SetItems(step.GetRawText())); break;
                             case "bot": entry["result"] = JsonNode.Parse(EmbedMode.BotWalkTo(step.GetRawText())); break;
                             case "status": entry["result"] = JsonNode.Parse(EmbedMode.StatusJson()); break;
+                            case "checked": entry["result"] = JsonNode.Parse(EmbedMode.SetChecked(step.GetProperty("names").GetRawText())); break;
+                            case "rearm": EmbedMode.RearmDoors(); break;
                             case "stop": EmbedMode.Stop(); break;
                             case "run":
                             {

@@ -271,6 +271,8 @@ namespace CloudberryKingdom.InGameObjects
 
 			if (Tools.DrawBoxes)
 			{
+				// An AP check coin of the embedded page's level has its own look (EmbedMode.DrawCheckCoin).
+				if (EmbedMode.Active && EmbedMode.DrawCheckCoin(this)) return;
 				Tools.QDrawer.DrawCircle(Pos, 38, new Color(255, 134, 26, 235));
 
 				//Box.DrawFilled(Tools.QDrawer, new Color(255, 134, 26, 220));
