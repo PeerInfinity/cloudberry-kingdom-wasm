@@ -7,6 +7,9 @@ import { dotnet } from './_framework/dotnet.js';
 const canvas = document.getElementById('canvas');
 // ?mono_log=<mask> turns on Mono's own logging (e.g. dll = P/Invoke resolution).
 const params = new URLSearchParams(location.search);
+// ?embed=1: the page as an Archipelago substrate (embed.js): no attract mode or menus; the game waits for the host's
+// __swfBridge.configure. It implies the generator API.
+const embedMode = params.get('embed') === '1';
 
 // The Controls panel: SDL reads the keyboard from the whole window, so a focused <summary> would also take the
 // game's Space and Enter as "toggle the panel". A click toggles it without focusing it. Open or closed is remembered.
@@ -14,12 +17,13 @@ const PANEL_OPEN_KEY = 'ck.panelOpen';
 const PANEL_CLOSED_BELOW_HEIGHT_PX = 600;   // a phone in landscape: the game gets the whole height by default
 const panel = document.getElementById('panel');
 if (panel) {
-  try { const saved = localStorage.getItem(PANEL_OPEN_KEY); panel.open = saved !== null ? saved === '1' : innerHeight >= PANEL_CLOSED_BELOW_HEIGHT_PX; } catch (e) { /* storage blocked */ }
+  try { const saved = localStorage.getItem(PANEL_OPEN_KEY); panel.open = embedMode ? false : saved !== null ? saved === '1' : innerHeight >= PANEL_CLOSED_BELOW_HEIGHT_PX; } catch (e) { /* storage blocked */ }
   const summary = panel.querySelector('summary');
   summary.addEventListener('mousedown', (e) => e.preventDefault());
   summary.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') e.preventDefault(); });
   panel.addEventListener('toggle', () => {
     summary.blur();
+    if (embedMode) return;   // an embedded page starts collapsed and does not change the remembered choice
     try { localStorage.setItem(PANEL_OPEN_KEY, panel.open ? '1' : '0'); } catch (e) { /* storage blocked */ }
   });
 }
@@ -103,9 +107,9 @@ try { buildInfo = await (await fetch('./build-info.json')).json(); } catch { /* 
 // ?api=1 (or a site built with --api, unless ?api=0): the game loads content, then idles on an empty level instead of
 // starting the attract-mode ScreenSaver, and window.cloudberry.generate({seed, difficulty, hero, length, geometry, tileset})
 // returns the generator's level + the computer's recording as a ck-level/1 document (C#: CloudberryKingdom.GeneratorApi).
-const apiMode = params.has('api') ? params.get('api') === '1' : buildInfo.api === true;
+const apiMode = embedMode || (params.has('api') ? params.get('api') === '1' : buildInfo.api === true);
 const API_READY_POLL_MS = 100;
-let builder = dotnet.withModuleConfig({ canvas }).withApplicationArguments(...(apiMode ? ['--api'] : []));
+let builder = dotnet.withModuleConfig({ canvas }).withApplicationArguments(...(embedMode ? ['--embed'] : apiMode ? ['--api'] : []));
 if (buildInfo.build) builder = builder.withEnvironmentVariable('CK_BUILD', buildInfo.build);
 // Mono's interpreter option PRECISE_GC (on by default in .NET 9) makes every collection walk the thread's LMF /
 // interpreter-frame chain (interp_mark_stack -> interp_mark_no_ref_slots). In this single-threaded AOT page that walk
@@ -399,6 +403,12 @@ if (apiMode) {
     schema: async () => { const g = await api(); await ready(); return JSON.parse(g.SchemaJson()); },
   });
   console.log('[host] api mode: window.cloudberry.generate({seed, difficulty, hero, length, geometry, tileset}) once ready');
+  if (embedMode) {
+    const embed = await import('./embed.js');
+    // The canonical document hash the region payload carries (embed.js: engine.build blanked).
+    window.cloudberry.docSha256 = async (args) => embed.docSha256(await generateText(args));
+    embed.start({ exports: await assemblyExports(), generateText, ready });
+  }
   // With FNA's loop Main never returns here; with the page loop it returns and the frames start.
   runMain().then(() => { console.log('[host] Main returned'); if (jsLoop) return startFrameLoop(); }, (e) => console.log('[host] Main: ' + (e && e.message || e)));
 } else {

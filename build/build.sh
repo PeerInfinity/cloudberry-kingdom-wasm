@@ -5,7 +5,7 @@
 #             [--fna <FNA clone>] [--natives <dir>] [--debug-log] [--profile] [--api] [--build-id <text>]
 #             [--fxc <fxc.exe>] [--shaders <dir of .fxb>] [--dotnet <dotnet>]
 #
-#   --out        the site directory to (re)create: _framework/, Content/, index.html, main.js, touch.js,
+#   --out        the site directory to (re)create: _framework/, Content/, index.html, main.js, touch.js, embed.js, host-sim.html,
 #                content-manifest.json, build-info.json. NEVER commit or publish it: the .wasm and the
 #                assemblies in _framework/ are the game's compiled code.
 #   --fna        a clone of FNA-XNA/FNA with its submodules (default: the external/FNA submodule)
@@ -115,7 +115,7 @@ echo "  publish took $(( $(date +%s) - start )) s"
 step "stage $OUT"
 rm -rf "$OUT"; mkdir -p "$OUT/Content"
 cp -rL "$publish_root/wwwroot/_framework" "$OUT/_framework"
-cp "$HERE/web/index.html" "$HERE/web/main.js" "$HERE/web/touch.js" "$OUT/"
+cp "$HERE/web/index.html" "$HERE/web/main.js" "$HERE/web/touch.js" "$HERE/web/embed.js" "$HERE/web/host-sim.html" "$OUT/"
 
 src="$GAME/$CONTENT_SRC_REL"
 for f in "${CONTENT_ROOT_FILES[@]}"; do cp "$src/$f" "$OUT/Content/$f"; done

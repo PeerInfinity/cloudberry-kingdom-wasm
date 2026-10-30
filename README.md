@@ -74,6 +74,24 @@ which squashes it on a phone); the page scales it to fit.
 `node build/tools/generate.cjs http://127.0.0.1:8765/ '{"seed":7,"difficulty":4,"hero":"Normal","length":6700}' doc.json`
 calls it from headless Chromium (needs Playwright).
 
+`ck-level/2` (any of its arguments) adds nested pieces with explicit upgrades, every generator setting found by
+reflection (`window.cloudberry.schema()`), Hero Factory heroes, platform items, coins with the tick at which the
+computer collects them, and a nested-piece verifier. `reroll: true` re-rolls a piece (seed scheme `ck-reroll/1`)
+until every platform item new in it is a real gate: the computer's input alone passes with the piece's items held and
+fails with any new item dropped. It returns the document of the resolved request (`rerolls: [...]`, written in the
+document's `args.request`), so storing that request regenerates the same document byte for byte.
+
+## Embedded mode
+
+`?embed=1` turns the page into an Archipelago substrate (`build/web/embed.js`): no attract mode and no menus. The
+game waits for its host to call `window.__swfBridge.configure(...)` with a region payload (`cloudberry-region/1`: a
+resolved `ck-level/2` request, the sha256 of its document, which coins are checks, the exits). The page regenerates
+the level, refuses it loudly if the document's hash differs, and plays it. Collecting a check coin calls the host's
+`sendLocation`, Up at the end door its `sendExit`, held items arrive through `pollItems` (a platform type you do not
+hold is drawn faint and cannot be landed on; the Jetpack item switches the hero's jetpack), and `botWalkTo` lets the
+computer's recording play a coin or the door for you. `host-sim.html` plays the host's part, so you can try it without
+a host: pick a region, toggle items and gates, send the bot, and read what the page sends.
+
 ## More detail
 
 The engineering record (the walls met, the page's shims, the generator API, `ck-level/1`) is

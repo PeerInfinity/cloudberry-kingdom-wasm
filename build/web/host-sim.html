@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cloudberry host simulator</title>
+  <style>
+    :root { --bg: #111; --panel: #1a1a1a; --line: #333; --text: #ccc; --dim: #888; --ok: #8c8; --bad: #f88; --accent: #8ac; }
+    html, body { margin: 0; background: var(--bg); color: var(--text); font: 12px/1.45 monospace; }
+    body { display: grid; grid-template-columns: minmax(0, 1fr) 360px; grid-template-rows: auto minmax(0, 1fr); height: 100dvh; }
+    header { grid-column: 1 / -1; padding: 4px 12px; border-bottom: 1px solid var(--line); color: var(--dim); }
+    header b { color: var(--text); }
+    #game { border: 0; width: 100%; height: 100%; background: #000; min-height: 0; }
+    aside { overflow-y: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 6px 10px; }
+    h2 { font-size: inherit; color: #ddd; margin: 10px 0 4px; }
+    label { display: inline-block; margin: 0 10px 2px 0; cursor: pointer; }
+    button { font: inherit; background: #2a2a2a; color: var(--text); border: 1px solid #444; border-radius: 3px; padding: 2px 8px; margin: 0 4px 4px 0; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    select, textarea { font: inherit; background: #000; color: var(--text); border: 1px solid #444; width: 100%; box-sizing: border-box; }
+    textarea { height: 7em; }
+    #log { white-space: pre-wrap; max-height: 16em; overflow-y: auto; background: #000; padding: 4px; border: 1px solid var(--line); }
+    #log .loc { color: var(--ok); } #log .exit { color: var(--accent); } #log .bad { color: var(--bad); }
+    #state { white-space: pre-wrap; color: var(--dim); }
+    @media (max-width: 760px) { body { grid-template-columns: 1fr; grid-template-rows: auto 56vw auto; height: auto; } aside { border-left: 0; } }
+  </style>
+</head>
+<body>
+  <header><b>Cloudberry host simulator</b>: plays the host's part of the <code>__swfBridge</code> contract for the embedded page
+    (<code>index.html?embed=1</code>): a region payload, items, gates, the bot; it logs what the page sends.</header>
+  <iframe id="game" title="The embedded game"></iframe>
+  <aside>
+    <h2>Region</h2>
+    <select id="preset"></select>
+    <div style="margin-top:4px">
+      <button id="configure" title="configure() with the payload below">Configure</button>
+      <button id="make" title="generate the arguments (with the reroll search), take the resolved request and its hash">Make payload from args</button>
+      <button id="tamper" title="configure with a wrong docSha256: the page must refuse">Configure with a wrong hash</button>
+      <button id="reset">Reset</button>
+    </div>
+    <details><summary>Payload (params)</summary><textarea id="payload" spellcheck="false"></textarea></details>
+    <h2>Items held <small>(pollItems)</small></h2>
+    <div id="items"></div>
+    <div><button id="all">All</button><button id="none">None</button></div>
+    <h2>Gates <small>(setGateStates)</small></h2>
+    <div id="gates"></div>
+    <h2>Bot <small>(botWalkTo)</small></h2>
+    <div id="bot"></div>
+    <label><input type="checkbox" id="snap"> snap to the recording (the engine's replay correction)</label>
+    <h2>Sent by the page</h2>
+    <div id="log"></div>
+    <h2>Page state</h2>
+    <div id="state"></div>
+  </aside>
+  <script type="module">
+    // The host's part, as Archipelago-CC's flashSubstrate/bridge.js plays it (that bridge is injected into the game iframe
+    // and needs it same-origin; here the simulator is the page's own origin). It fills in the host side of window.__swfBridge
+    // (sendLocation / sendExit / setPlayClock / requestHost) and calls the game side.
+    const ITEMS = ['MovingBlock', 'FallingBlock', 'BouncyBlock', 'GhostBlock', 'Cloud', 'Elevator', 'Pendulum', 'Conveyor', 'FlyBlob', 'Jetpack'];
+    const SIDES = ['north', 'east', 'south', 'west'];
+    const EXITS = SIDES.map((side) => ({ side, exitName: `Region 1 ${side} exit` }));
+    const sidePortals = Object.fromEntries(SIDES.map((s) => [s, s]));
+    // Fixed payloads: the resolved request and its document hash (measured: native oracle = tab, engine.build blanked).
+    const PRESETS = [
+      {
+        name: '3 pieces: MovingBlock → + FallingBlock → + Cloud',
+        args: { seed: 7, tileset: 'castle', length: 9000, pieces: [{ upgrades: { MovingBlock: 5, Jump: 2 } }, { upgrades: { MovingBlock: 4, FallingBlock: 5, Jump: 2 } }, { upgrades: { MovingBlock: 3, FallingBlock: 3, Cloud: 5, Jump: 2 } }], reroll: true, trace: false, settings: false },
+        payload: {
+          generate: { seed: 7, tileset: 'castle', length: 9000, pieces: [{ upgrades: { MovingBlock: 5, Jump: 2 } }, { upgrades: { MovingBlock: 4, FallingBlock: 5, Jump: 2 } }, { upgrades: { MovingBlock: 3, FallingBlock: 3, Cloud: 5, Jump: 2 } }], trace: false, settings: false, rerolls: [0, 0, 0] },
+          docSha256: '47deaba2877b6214e374be9ce1d3318515a2aebdf389087ea52f8c59af41dcf3',
+          checks: { coin51: 51, coin62: 62, coin74: 74 },
+        },
+      },
+      {
+        name: 'Jetpack hero, 2 pieces: BouncyBlock → + Pendulum',
+        args: { seed: 4, difficulty: 2, tileset: 'castle', length: 7000, pieces: [{ upgrades: { BouncyBlock: 5 } }, { upgrades: { BouncyBlock: 3, Pendulum: 5 } }], heroCustom: { move: 'Jetpack', phsx: { jetpackfuel: 1 } }, reroll: true, trace: false, settings: false },
+        payload: {
+          generate: { seed: 4, difficulty: 2, tileset: 'castle', length: 7000, pieces: [{ upgrades: { BouncyBlock: 5 } }, { upgrades: { BouncyBlock: 3, Pendulum: 5 } }], heroCustom: { move: 'Jetpack', phsx: { jetpackfuel: 1 } }, trace: false, settings: false, rerolls: [0, 0] },
+          docSha256: '342e0adbac6d75f281208c2e4f751561107d58935a32f021fa538365e06f85fa',
+          checks: { coin41: 41, coin52: 52 },
+        },
+      },
+    ];
+    const $ = (id) => document.getElementById(id);
+    const frame = $('game');
+    const sim = { log: [], held: new Set(), portals: {}, pickups: {}, clock: null };
+    window.__hostSim = sim;
+
+    function fullPayload(p) {
+      return { payload: 'cloudberry-region/1', ...p, exits: EXITS, sidePortals, entrySide: 'west' };
+    }
+    function payload() { return JSON.parse($('payload').value); }
+    function setPayload(p) { $('payload').value = JSON.stringify(p, null, 1); renderGates(); renderBot(); }
+
+    function log(kind, text) {
+      sim.log.push({ kind, text, t: performance.now() });
+      const line = document.createElement('div');
+      line.className = kind;
+      line.textContent = `${(performance.now() / 1000).toFixed(1)}s ${text}`;
+      $('log').prepend(line);
+    }
+
+    const game = () => frame.contentWindow;
+    const gameBridge = () => game()?.__swfBridge;
+
+    function installHostSide() {
+      const w = game();
+      w.__swfBridge = Object.assign(w.__swfBridge ?? {}, {
+        sendLocation: (name) => log('loc', `sendLocation(${JSON.stringify(name)}) → AP "${apLocations()[name] ?? '(unmapped)'}"`),
+        sendExit: (portalId, side) => log('exit', `sendExit(${JSON.stringify(portalId)}, ${JSON.stringify(side)})`),
+        setPlayClock: (running, stats) => { sim.clock = { running, ...stats }; },
+        requestHost: (request) => log('exit', `requestHost(${JSON.stringify(request)})`),
+      });
+    }
+
+    function apLocations() {
+      return Object.fromEntries(Object.keys(payload().checks ?? {}).map((name, i) => [name, `Region 1 - Check ${i + 1}`]));
+    }
+
+    async function configure(params) {
+      const b = gameBridge();
+      if (!b?.configure) { log('bad', 'the page has no __swfBridge.configure yet'); return; }
+      sim.log.length = 0;
+      log('', `configure (${Object.keys(params.checks ?? {}).length} checks, docSha256 ${params.docSha256.slice(0, 12)}…)`);
+      await b.configure({ gameId: 'cloudberry', params, ap_items: {}, ap_locations: apLocations(), regionId: 'Region 1', checkedLocations: [] });
+      const app = game().__cloudberryEmbed?.app;
+      if (app?.refusal) log('bad', 'REFUSED: ' + app.refusal);
+      else log('', 'configured: ' + JSON.stringify(app?.playResult));
+      pushItems();
+      pushGates();
+    }
+
+    function pushItems() { gameBridge()?.pollItems?.([...sim.held]); }
+    function pushGates() { gameBridge()?.setGateStates?.({ portals: { ...sim.portals }, pickups: { ...sim.pickups } }); }
+
+    function renderItems() {
+      $('items').replaceChildren(...ITEMS.map((item) => {
+        const l = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox'; box.checked = sim.held.has(item);
+        box.addEventListener('change', () => { box.checked ? sim.held.add(item) : sim.held.delete(item); pushItems(); });
+        l.append(box, ' ' + item);
+        return l;
+      }));
+    }
+    function renderGates() {
+      const p = (() => { try { return payload(); } catch { return {}; } })();
+      const boxes = [...SIDES.map((s) => ['portals', s]), ...Object.keys(p.checks ?? {}).map((c) => ['pickups', c])];
+      $('gates').replaceChildren(...boxes.map(([group, id]) => {
+        const l = document.createElement('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox'; box.checked = sim[group][id] !== false;
+        box.addEventListener('change', () => { sim[group][id] = box.checked; pushGates(); });
+        l.append(box, ` ${id}`);
+        return l;
+      }));
+    }
+    function renderBot() {
+      const p = (() => { try { return payload(); } catch { return {}; } })();
+      const goals = [...Object.keys(p.checks ?? {}).map((id) => ({ kind: 'pickup', id })), ...SIDES.map((id) => ({ kind: 'portal', id }))];
+      $('bot').replaceChildren(...goals.map((goal) => {
+        const b = document.createElement('button');
+        b.textContent = goal.kind === 'pickup' ? `→ ${goal.id}` : `→ door, leave ${goal.id}`;
+        b.addEventListener('click', () => { log('', `botWalkTo(${JSON.stringify(goal)})`); gameBridge()?.botWalkTo?.(goal, { snap: $('snap').checked }); });
+        return b;
+      }), Object.assign(document.createElement('button'), { textContent: 'stop', onclick: () => gameBridge()?.botStop?.() }));
+    }
+
+    async function makePayload(args) {
+      const w = game();
+      const text = await w.cloudberry.generateText(args);
+      const doc = JSON.parse(text);
+      if (doc.error) { log('bad', 'generator refused: ' + doc.error); return null; }
+      const canon = w.__cloudberryEmbed.canonicalDocText(text);
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canon));
+      const docSha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+      // One check per piece: the coin in the middle of each piece's coins.
+      const byPiece = new Map();
+      for (const c of doc.coins.list) if (c.witness) (byPiece.get(c.piece) ?? byPiece.set(c.piece, []).get(c.piece)).push(c);
+      const checks = Object.fromEntries([...byPiece.entries()].sort((a, b) => a[0] - b[0]).map(([, list]) => list[Math.floor(list.length / 2)]).map((c) => [`coin${c.id}`, c.id]));
+      return fullPayload({ generate: doc.args.request, docSha256, checks });
+    }
+
+    PRESETS.forEach((p, i) => $('preset').append(new Option(p.name, String(i))));
+    $('preset').addEventListener('change', () => setPayload(fullPayload(PRESETS[+$('preset').value].payload)));
+    $('configure').addEventListener('click', () => configure(payload()));
+    $('tamper').addEventListener('click', () => { const p = payload(); p.docSha256 = p.docSha256.replace(/^./, (c) => (c === '0' ? '1' : '0')); configure(p); });
+    $('make').addEventListener('click', async () => { const p = await makePayload(PRESETS[+$('preset').value].args); if (p) { setPayload(p); log('', 'payload made: ' + p.docSha256.slice(0, 12) + '…'); } });
+    $('reset').addEventListener('click', () => gameBridge()?.reset?.());
+    $('all').addEventListener('click', () => { ITEMS.forEach((i) => sim.held.add(i)); renderItems(); pushItems(); });
+    $('none').addEventListener('click', () => { sim.held.clear(); renderItems(); pushItems(); });
+    setPayload(fullPayload(PRESETS[0].payload));
+    ITEMS.forEach((i) => sim.held.add(i));
+    renderItems();
+
+    setInterval(() => {
+      try {
+        const st = game()?.__cloudberryEmbed?.status?.();
+        if (st) $('state').textContent = JSON.stringify({ ...st, clock: sim.clock }, null, 1);
+      } catch { /* not ready */ }
+    }, 500);
+
+    // ?embedSrc= another page URL (same origin); &auto=0 leaves configure to the button.
+    const q = new URLSearchParams(location.search);
+    frame.src = q.get('embedSrc') ?? './index.html?embed=1';
+    frame.addEventListener('load', () => {
+      installHostSide();
+      const go = () => { installHostSide(); if (q.get('auto') !== '0') configure(payload()); };
+      if (game().__cloudberryEmbed) go(); else game().addEventListener('cloudberry-embed-ready', go, { once: true });
+    });
+  </script>
+</body>
+</html>
