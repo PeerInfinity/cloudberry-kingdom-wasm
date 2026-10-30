@@ -13,3 +13,5 @@ obj-*/
 *.user
 .vs/
 .DS_Store
+# build/tools/native-dev.sh generates this from Game.Browser.csproj
+Game/Game.NativeDev.csproj
