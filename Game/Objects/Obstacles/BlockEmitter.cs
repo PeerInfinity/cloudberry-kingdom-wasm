@@ -113,6 +113,9 @@ namespace CloudberryKingdom
             if (GiveLayer) block.Core.DrawLayer = Core.DrawLayer;
 
             block.Core.Tag = Core.Tag;
+            block.Core.GenSeedPiece = Core.GenSeedPiece;
+            block.Core.GateItem = Core.GateItem;
+            block.Core.GenTagEpoch = Core.GenTagEpoch;
 
             block.Core.Active = true;
             block.Range = Range;

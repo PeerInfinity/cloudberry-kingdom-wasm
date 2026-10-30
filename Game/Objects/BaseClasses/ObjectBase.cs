@@ -460,6 +460,13 @@ namespace CloudberryKingdom
         /// </summary>
         public bool Real = true;
 
+        /// <summary>
+        /// Generator API (P0): which LevelSeedData.PieceSeeds entry made this object (-1 = not made by a piece: runtime,
+        /// or tagged before the level finished), and which platform item gates it (PlatformSuppression.Items index,
+        /// -1 = never suppressed). Set by MakeLevel once per piece; an emitted platform inherits its emitter's.
+        /// </summary>
+        public int GenSeedPiece = -1, GateItem = -1, GenTagEpoch;
+
 
         /// <summary>
         /// Whether the object is owned by a game.
@@ -756,6 +763,10 @@ namespace CloudberryKingdom
             ContinuousEnabled = A.ContinuousEnabled;
 
             VisualResettedOnce = A.VisualResettedOnce;
+
+            GenSeedPiece = A.GenSeedPiece;
+            GateItem = A.GateItem;
+            GenTagEpoch = A.GenTagEpoch;
 
             HeldOffset = A.HeldOffset;
             Held = A.Held;

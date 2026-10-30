@@ -160,6 +160,9 @@ namespace CoreEngine
         bool Current_U_Wrap, Current_V_Wrap;
 
         public MyOwnVertexFormat[] Vertices;
+
+        /// <summary>Every quad's colour is scaled by this while it is below 1 (premultiplied alpha: fainter). Level draw sets it around an unheld platform item.</summary>
+        public float FadeScale = 1;
         public int N;
         public int TrianglesInBuffer;
         private int i;
@@ -318,6 +321,9 @@ namespace CoreEngine
             Vertices[i + 5] = Vertices[i + 1] = quad.v1.Vertex;
             Vertices[i + 4] = Vertices[i + 2] = quad.v2.Vertex;
             Vertices[i + 3] = quad.v3.Vertex;
+            if (FadeScale < 1)
+                for (int k = 0; k < 6; k++)
+                    Vertices[i + k].Color = Vertices[i + k].Color * FadeScale;
 
             i += 6;
             TrianglesInBuffer += 2;
@@ -376,6 +382,9 @@ namespace CoreEngine
             Vertices[i + 5] = Vertices[i + 1] = quad.v1.Vertex;
             Vertices[i + 4] = Vertices[i + 2] = quad.v2.Vertex;
             Vertices[i + 3] = quad.v3.Vertex;
+            if (FadeScale < 1)
+                for (int k = 0; k < 6; k++)
+                    Vertices[i + k].Color = Vertices[i + k].Color * FadeScale;
 
             i += 6;
             TrianglesInBuffer += 2;

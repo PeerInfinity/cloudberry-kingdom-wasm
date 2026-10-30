@@ -289,6 +289,9 @@ let exportsPromise = null;
 const assemblyExports = () => (exportsPromise ??= runtime.getAssemblyExports('CloudberryKingdom.dll')).then((e) => e.CloudberryKingdom);
 window.cloudberry = {
   state: async () => JSON.parse((await assemblyExports()).BrowserPlayState.StateJson()),
+  // Platform items (C#: CloudberryKingdom.PlatformSuppression): setHeld(['MovingBlock', …]) draws every other item's
+  // platforms faint and makes them unlandable; setHeld(null) = everything solid (the default). Resolves to {enabled, held}.
+  setHeld: async (items = null) => JSON.parse((await assemblyExports()).GeneratorApi.SetHeldJson(JSON.stringify(items))),
   // A throw caught inside the next game frame; resolves to the count of probes that came back (0 = the page died).
   throwProbe: async (waitMs = THROW_PROBE_WAIT_MS) => {
     const loop = (await assemblyExports()).BrowserMainLoop;
@@ -298,6 +301,11 @@ window.cloudberry = {
   },
 };
 const THROW_PROBE_WAIT_MS = 500;
+// ?held=MovingBlock,Cloud starts with only those platform items held (?held= : none held); absent = everything solid.
+if (params.has('held')) {
+  const held = params.get('held');
+  window.cloudberry.setHeld(held === '' ? [] : held.split(',')).then((r) => console.log('[host] platform items: ' + JSON.stringify(r)));
+}
 
 // The game saves under Environment.SpecialFolder.MyDocuments, which is "" here: /Cloudberry Kingdom/{SaveData.bam,
 // Options, Player Data}. Without the directory every save throws DirectoryNotFound; the page creates it (in memory:
@@ -387,6 +395,8 @@ if (apiMode) {
     generateText,
     generate: async (args = {}) => JSON.parse(await generateText(args)),
     timings: async () => JSON.parse((await api()).LastTimings()),
+    // Every argument generate() accepts (ck-level/2), its type and default; the settings groups are found by reflection.
+    schema: async () => { const g = await api(); await ready(); return JSON.parse(g.SchemaJson()); },
   });
   console.log('[host] api mode: window.cloudberry.generate({seed, difficulty, hero, length, geometry, tileset}) once ready');
   // With FNA's loop Main never returns here; with the page loop it returns and the frames start.

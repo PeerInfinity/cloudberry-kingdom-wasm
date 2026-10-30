@@ -842,6 +842,7 @@ namespace CloudberryKingdom
         public virtual void LandOnSomething(bool MakeReadyToJump, ObjectBase ThingLandedOn)
         {
             ObjectLandedOn = ThingLandedOn;
+            if (Level.ReplayProbe && ThingLandedOn != null && !(ThingLandedOn is BlockBase)) GeneratorApi.OnStood(MyBob, ThingLandedOn);
         }
         public virtual void HitHeadOnSomething(ObjectBase ThingHit) { }
 

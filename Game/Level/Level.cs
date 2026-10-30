@@ -1129,7 +1129,17 @@ namespace CloudberryKingdom.Levels
 
             foreach (ObjectBase obj in DrawLayer[i])
                 if (obj.Core.Show)
-                    obj.Draw();
+                {
+                    // An unheld platform item is drawn faint (PlatformSuppression).
+                    if (PlatformSuppression.IsSuppressed(obj.Core))
+                    {
+                        Tools.QDrawer.FadeScale = PlatformSuppression.DrawAlpha;
+                        obj.Draw();
+                        Tools.QDrawer.FadeScale = 1;
+                    }
+                    else
+                        obj.Draw();
+                }
 
             Tools.QDrawer.Flush();
 

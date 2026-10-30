@@ -1484,6 +1484,7 @@ namespace CloudberryKingdom.Bobs
                     {
                         block.BlockCore.StoodOn = true;
                         block.LandedOn(this);
+                        if (Level.ReplayProbe) GeneratorApi.OnStood(this, block);
                     }
 
                     if (!TopCol)
@@ -2049,7 +2050,7 @@ namespace CloudberryKingdom.Bobs
 
             foreach (ObjectBase obj in Core.MyLevel.ActiveObjectList)
             {
-                if (!obj.Core.MarkedForDeletion && obj.Core.Real && obj.Core.Active && obj.Core.Show)
+                if (!obj.Core.MarkedForDeletion && obj.Core.Real && obj.Core.Active && obj.Core.Show && !PlatformSuppression.IsSuppressed(obj.Core))
                     obj.Interact(this);
             }
         }

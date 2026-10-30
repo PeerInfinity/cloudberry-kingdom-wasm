@@ -56,6 +56,9 @@
     <Compile Include="MainClass\BrowserMainLoop.cs" />
     <Compile Include="MainClass\BrowserPlayState.cs" />
     <Compile Include="MainClass\GeneratorApi.cs" />
+    <Compile Include="MainClass\GeneratorReplay.cs" />
+    <Compile Include="MainClass\GeneratorSettings.cs" />
+    <Compile Include="MainClass\PlatformSuppression.cs" />
     <Compile Include="Engine\Chunk.cs" />
     <Compile Include="Engine\Effects\EzEffectWad.cs" />
     <Compile Include="Engine\Input\CoreInput.cs" />

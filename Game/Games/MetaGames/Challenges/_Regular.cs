@@ -32,6 +32,16 @@ namespace CloudberryKingdom
 
         public static LevelSeedData HeroLevel(float Difficulty, BobPhsx Hero, BobPhsx Hero2, LevelGeometry Geometry, int Length, bool ScreenSaver)
         {
+            return HeroLevel(Difficulty, Hero, Hero2, Geometry, 1, Length, ScreenSaver, null, null);
+        }
+
+        /// <summary>
+        /// Generator API: HeroLevel with a piece count, a hook that runs just before Initialize (LevelSeedData settings),
+        /// and a wrapper around the difficulty's per-piece modifier (explicit upgrades, style and parameter overrides).
+        /// </summary>
+        public static LevelSeedData HeroLevel(float Difficulty, BobPhsx Hero, BobPhsx Hero2, LevelGeometry Geometry, int NumPieces, int Length, bool ScreenSaver,
+            Action<LevelSeedData> BeforeInitialize, Func<LevelSeedData.CustomDifficulty, LevelSeedData.CustomDifficulty> WrapCustom)
+        {
             if (Hero == ArcadeMenu.Ultimate)
             {
                 Length *= 2;
@@ -59,8 +69,10 @@ namespace CloudberryKingdom
             }
 
             LevelSeedData.CustomDifficulty custom = DifficultyGroups.FixedPieceMod(Difficulty, data, ScreenSaver, madness);
+            if (WrapCustom != null) custom = WrapCustom(custom);
+            if (BeforeInitialize != null) BeforeInitialize(data);
 
-            data.Initialize(NormalGameData.Factory, Geometry, 1, Length, custom);
+            data.Initialize(NormalGameData.Factory, Geometry, NumPieces, Length, custom);
 
             return data;
         }

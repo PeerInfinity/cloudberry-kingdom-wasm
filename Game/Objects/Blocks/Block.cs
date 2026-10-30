@@ -225,7 +225,8 @@ namespace CloudberryKingdom.Blocks
         public AABox Box { get { return MyBox; } }
 
         public bool Active;
-        public bool IsActive { get { return Active; } set { Active = value; } }
+        /// <summary>Read only by the bob's block interactions: an unheld platform item (PlatformSuppression) is never landed on.</summary>
+        public bool IsActive { get { return Active && !PlatformSuppression.IsSuppressed(Core); } set { Active = value; } }
 
         protected BlockData BlockCoreData;
         public BlockData BlockCore { get { return BlockCoreData; } }

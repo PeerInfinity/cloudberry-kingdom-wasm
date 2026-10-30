@@ -47,11 +47,13 @@ namespace CloudberryKingdom
             float Height = 0;
 
             Level level = null;
+            int TagEpoch = PlatformSuppression.NewTagEpoch();
             foreach (PieceSeedData Piece in PieceSeeds)
             {
                 if (Piece.Ladder != Level.LadderType.None)
                 {
                     NewLevel.MakeLadder(Piece);
+                    PlatformSuppression.TagNewObjects(NewLevel, TagEpoch, PieceSeeds.IndexOf(Piece), Piece);
 
                     if (PieceSeeds.IndexOf(Piece) == 0)
                         cam.BLCamBound = cam.Data.Position;
@@ -194,6 +196,7 @@ namespace CloudberryKingdom
 
                 // Absorb the new level
                 NewLevel.AbsorbLevel(level);
+                PlatformSuppression.TagNewObjects(NewLevel, TagEpoch, PieceSeeds.IndexOf(Piece), Piece);
 
                 // Absorb the new level's time type
                 if (level.TimeType != Level.TimeTypes.Regular)
