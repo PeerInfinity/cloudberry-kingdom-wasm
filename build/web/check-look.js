@@ -10,7 +10,9 @@
 
 export const DEFAULT_PACKS_BASE = 'https://peerinfinity.github.io/Archipelago-CC/packs/';
 const PACK_ID = 'archipelago';
-const SPRITE_KEY = 'archipelago:pickup/item';
+// The largest frame first: the 64×64 key (Archipelago-CC ⚖ R17) draws about 1:1 at the 1280 buffer; a pack without it
+// still has the 16×16 one (Seedling's).
+const SPRITE_KEYS = ['archipelago:pickup/item@64', 'archipelago:pickup/item'];
 const FETCH_TIMEOUT_MS = 8000;
 
 // Texture side (texels) and the size the game draws it at (world units; an ordinary coin is a 76 wide circle).
@@ -52,14 +54,16 @@ export async function resolveLogo(base) {
   if (typeof artPath !== 'string') throw new Error(`${PACK_ID}/pack.json has no art layer`);
   const manifestUrl = new URL(artPath, packUrl);
   const manifest = await fetchJson(manifestUrl);
-  const sprite = manifest.sprites?.[SPRITE_KEY];
-  if (!sprite) throw new Error(`the art manifest has no sprite ${SPRITE_KEY}`);
+  const key = SPRITE_KEYS.find((k) => manifest.sprites?.[k]);
+  if (!key) throw new Error(`the art manifest has none of the sprites ${SPRITE_KEYS.join(', ')}`);
+  const sprite = manifest.sprites[key];
   const sheet = manifest.sheets?.[sprite.sheet];
   if (!sheet?.file) throw new Error(`the art manifest has no sheet ${sprite.sheet}`);
   return {
     url: new URL(sheet.file, manifestUrl).href,
     frame: { x: 0, y: 0, w: sprite.fw ?? sheet.w, h: sprite.fh ?? sheet.h },
     licence: pack.licence ?? null,
+    key,
   };
 }
 
@@ -100,7 +104,7 @@ function outlineOf(data) {
 
 function logoLook(bitmap, frame) {
   const [, g] = canvas2d();
-  g.imageSmoothingEnabled = false;   // the 16x16 pixels, scaled up whole
+  g.imageSmoothingEnabled = false;   // a 16x16 frame's pixels scaled up whole; a 64x64 frame is drawn 1:1
   g.drawImage(bitmap, frame.x, frame.y, frame.w, frame.h, 0, 0, TEX, TEX);
   const fill = g.getImageData(0, 0, TEX, TEX).data;
   // Solid where the logo is: the sheet's soft edge texels (alpha < ALPHA_SOLID) are dropped, the rest made opaque.
