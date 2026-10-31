@@ -3,10 +3,14 @@
 //
 // The __swfBridge contract (Archipelago-CC frontend/modules/flashSubstrate/bridge.js, injected into this page by the host):
 //   game side, here:
-//     configure({params, ap_items, ap_locations, regionId, checkedLocations, …})
+//     configure({params, ap_items, ap_locations, regionId, checkedLocations, arrivedFrom, …})
 //         params = the region payload, PAYLOAD_VERSION (see PAYLOAD below). The page regenerates the level from
 //         params.generate, refuses LOUDLY (console.error + the status line + __cloudberryEmbed.refusal) when the document's
 //         canonical sha256 is not params.docSha256, or when a check coin is not in the document, then plays it.
+//         arrivedFrom (OPTIONAL, P2b): how the player arrived — { exit_id, source_region? } (Archipelago-CC's
+//         procgenPlayer) or the exit id alone: exit_id names THIS region's exit, else (a world whose exits are not
+//         linked both ways) the exit leading back to source_region is the one. The start door then offers that exit's
+//         side too — the way back by the side you came in (see entrySide below).
 //     pollItems(names)              the AP item names held → platform items + Jetpack (params.items / ap_items map names)
 //     setGateStates({portals, pickups})  per side / per check: false = closed (a closed check's collection is held
 //                                   until it opens; a closed side is not offered at the door)
@@ -19,7 +23,8 @@
 //   host side, called by the page:
 //     sendLocation(<check name>)    when a check coin is collected (once per configure; the bridge maps it to the AP name)
 //     sendExit(<exitName>, <side>)  chosen in the exit menu (Up at the end door: every exit; Up at the start door: the
-//                                   way back, the exit on entrySide), or the bot's side when the bot walked to the door
+//                                   way back — the exit the player arrived by, and the exit on entrySide), or the bot's
+//                                   side when the bot walked to the door
 //     setPlayClock(running, {gameSeconds})  every second and on change; running is false while the game is paused
 //                                   (the exit menu is open, or the page is hidden)
 //
@@ -30,11 +35,15 @@
 //     checks: { '<check name>': <coin id>, … },   the coins that are AP location checks (names are the ap_locations keys)
 //     items: { '<AP item name>': '<game item>' }  optional; game items = the 9 platform items + 'Jetpack'; else ap_items,
 //                                  else the AP item name is the game item name
-//     exits: [{ side, exitName, label? }],  the region's exits, offered at the end door; label (optional, short) is shown
-//                                  under the name, e.g. what a closed exit needs; a closed exit without one says "locked"
+//     exits: [{ side, exitName, exitId?, targetRegion?, label? }],  the region's exits, offered at the end door; label
+//                                  (optional, short) is shown under the name, e.g. what a closed exit needs; a closed exit
+//                                  without one says "locked"; exitId and targetRegion (optional, P2b) are the host's id of
+//                                  the exit and the region it leads to, which configure's arrivedFrom is matched against
 //     sidePortals: { <side>: <side> }   the bridge's walkTo translation (portal id = side)
-//     entrySide: <side> | null }   the side entered from: the start door offers that exit as the way back (never gated by
-//                                  the level; setGateStates may still close it); null = no menu at the start door
+//     entrySide: <side> | null }   the region's way back: the start door offers that exit (never gated by the level;
+//                                  setGateStates may still close it). With configure's arrivedFrom, the start door offers
+//                                  the side arrived by AS WELL (one entry when they are the same side). Neither = the
+//                                  start door does nothing
 // Page parameter packs=<url>: the art library's base URL (default check-look.js DEFAULT_PACKS_BASE) for the check
 // coins' Archipelago logo; when it cannot be read the check coins are larger purple coins instead.
 // Test surface (not the contract): window.__cloudberryEmbed.
@@ -201,15 +210,35 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     call('sendExit', exitName, side);
   }
 
-  /** The menu's entries for a door: the end door lists every exit; the start door the way back (entrySide's exit). */
+  /** The side the player arrived by (configure's arrivedFrom → that exit's side), or null. */
+  function arrivedSide() {
+    const from = app.config?.arrivedFrom;
+    const id = typeof from === 'string' ? from : from?.exit_id;
+    const source = typeof from === 'object' && from ? from.source_region : null;
+    const exit = (id && (app.exits.find((e) => e.exitId === id) ?? app.exits.find((e) => e.exitName === id)))
+      || (source && app.exits.find((e) => e.targetRegion === source))
+      || null;
+    return exit && SIDES.includes(exit.side) ? exit.side : null;
+  }
+
+  /** The start door's sides: the side arrived by, then the payload's entrySide (each once). */
+  function startDoorSides() {
+    return [...new Set([arrivedSide(), app.payload?.entrySide].filter((s) => SIDES.includes(s)))];
+  }
+
+  /** The menu's entries for a door: the end door lists every exit; the start door the way back (startDoorSides). */
   function menuEntries(door) {
-    const list = door === 'start' ? app.exits.filter((e) => e.side === app.payload?.entrySide) : app.exits.filter((e) => SIDES.includes(e.side));
+    const back = door === 'start' ? startDoorSides() : null;
+    const list = back ? back.map((s) => exitFor(s)).filter(Boolean) : app.exits.filter((e) => SIDES.includes(e.side));
     return list.map((e) => ({ door, side: e.side, exitName: e.exitName, open: portalOpen(e.side), label: typeof e.label === 'string' && e.label ? e.label : undefined }));
   }
 
   function openMenu(door) {
     app.menu = { door };
-    menu.open({ title: door === 'start' ? 'Go back the way you came' : `Leave ${app.config?.regionId ?? 'this region'}`, entries: menuEntries(door) });
+    const entries = menuEntries(door);
+    const title = door !== 'start' ? `Leave ${app.config?.regionId ?? 'this region'}`
+      : entries.length > 1 ? 'Go back' : 'Go back the way you came';
+    menu.open({ title, entries });
     pause('menu', true);
   }
 
@@ -224,7 +253,7 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
       sendExit(exit.exitName, exit.side, 'end');
       return;
     }
-    if (ev.door === 'start' && !app.payload?.entrySide) return;   // no way back offered: the start door does nothing
+    if (ev.door === 'start' && startDoorSides().length === 0) return;   // no way back offered: the start door does nothing
     openMenu(ev.door === 'start' ? 'start' : 'end');
   }
 
@@ -304,6 +333,7 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     menu,
     lookReady,
     rearmDoors: () => exports.EmbedMode.RearmDoorsNow(),
+    startDoorSides: () => startDoorSides(),
     physicsCount: () => exports.BrowserMainLoop.PhysicsCount(),
     pause: (reason, on) => pause(reason, on),
     status: () => JSON.parse(exports.EmbedMode.Status()),
