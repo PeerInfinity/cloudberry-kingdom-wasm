@@ -401,7 +401,7 @@ namespace CloudberryKingdom
         // -------------------------------------------------------------------------------------------------------------
         // The bot
 
-        /// <summary>json: {goal: {kind: 'pickup'|'portal', id}, options: {snap}}. Returns {ok, piece, tick} or {ok:false, error}.</summary>
+        /// <summary>json: {goal: {kind: 'pickup'|'portal'|'startdoor', id}, options: {snap}}. Returns {ok, piece, tick} or {ok:false, error}.</summary>
         public static string BotWalkTo(string json)
         {
             try
@@ -433,6 +433,15 @@ namespace CloudberryKingdom
                     walk.Piece = level.LevelPieces.Count - 1;
                     walk.Tick = -1;
                     walk.Limit = level.LevelPieces[walk.Piece].PieceLength + BotSlackTicks;
+                }
+                else if (walk.Kind == "startdoor")
+                {
+                    // The way back (P3a): respawn at the level's start (piece 0's checkpoint is the start door) and leave by
+                    // the start door, the side in id. The page decides that a side is a start-door side (startDoorSides).
+                    if (level.StartDoor == null) throw new InvalidOperationException("the level has no start door");
+                    walk.Piece = 0;
+                    walk.Tick = -1;
+                    walk.Limit = BotSlackTicks;
                 }
                 else throw new ArgumentException("unknown goal kind '" + walk.Kind + "'");
 
@@ -519,6 +528,7 @@ namespace CloudberryKingdom
             if (!walk.Armed)
             {
                 if (level.SetToReset || level.Bobs.Count == 0) return;
+                if (walk.Kind == "startdoor") { walk.Armed = true; return; }   // no recording: the bob stands at the start door
                 // The respawn happened: the player's bob plays the piece's recording, as the computer's replay does.
                 foreach (Bob bob in level.Bobs)
                 {
@@ -540,6 +550,19 @@ namespace CloudberryKingdom
                 return;
             }
             if (walk.Kind == "pickup" && walk.Reached) { StopBot("reached"); return; }
+            if (walk.Kind == "startdoor")
+            {
+                if (level.Bobs.Any(b => b.Dying || b.Dead)) { StopBot("died"); return; }
+                if (start != null && level.Bobs.Any(b => start.BobInReach(b)))
+                {
+                    StopBot("reached");
+                    StartDoorArmed = false;
+                    Events.Add("{\"kind\":\"door\",\"door\":\"start\",\"bot\":true}");
+                    return;
+                }
+                if (walk.Steps > walk.Limit) StopBot("timeout");
+                return;
+            }
             if (walk.Kind == "portal" && !walk.Steering && door != null && level.Bobs.Count > 0
                 && level.CurPhsxStep - level.Bobs[0].IndexOffset >= level.CurPiece.PieceLength)
             {

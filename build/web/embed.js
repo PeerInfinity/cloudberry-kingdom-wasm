@@ -16,7 +16,10 @@
 //                                   until it opens; a closed side is not offered at the door)
 //     botWalkTo(goal, options)      {kind:'pickup', id:<check name>} = respawn at the coin's piece checkpoint and play that
 //                                   piece's recording to the coin; {kind:'portal', id:<side>} = respawn at the last piece's
-//                                   checkpoint and play to the end door (then leave by that side). options: {snap}.
+//                                   checkpoint and play to the end door (then leave by that side) — except a side the
+//                                   START door offers (startDoorSides: the way back, P3a): then respawn at the level's start,
+//                                   at the start door, and leave by it (no item needed). options: {snap, door:'start'|'end'}
+//                                   (door forces one; feature test: __cloudberryEmbed.features.botStartDoor).
 //     botStop(), reset(), setHostState(state) (kept; nothing reads it yet)
 //     setCheckedLocations(names)    OPTIONAL (P1b): the check names the host has as checked; their coins are drawn as
 //                                   outlines (configure's checkedLocations seeds the same set)
@@ -245,8 +248,16 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
   function onDoor(ev) {
     const region = app.config?.regionId ?? '?';
     if (ev.bot) {
-      // The bot leaves by the side it walked to, without the menu.
+      // The bot leaves by the side it walked to, without the menu: by the start door when it walked there (the way back),
+      // else by the end door.
       const botSide = app.lastBotGoal?.kind === 'portal' ? app.lastBotGoal.id : null;
+      if (ev.door === 'start') {
+        if (!botSide || !startDoorSides().includes(botSide)) { show(`region ${region} — the bot is at the start door, but ${botSide} is not a way back`); return; }
+        const back = exitFor(botSide);
+        if (!back || !portalOpen(back.side)) { show(`region ${region} — the ${botSide} way back is closed`); return; }
+        sendExit(back.exitName, back.side, 'start');
+        return;
+      }
       const exit = botSide ? exitFor(botSide) : null;
       if (!exit) { show(`region ${region} — the bot is at the door, but there is no ${botSide} exit`); return; }
       if (!portalOpen(exit.side)) { show(`region ${region} — the ${exit.side} exit is closed`); return; }
@@ -291,10 +302,22 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
   document.addEventListener('visibilitychange', () => pause('hidden', document.hidden));
   if (document.hidden) pause('hidden', true);
 
+  /** The door a bot walk to a side uses: the start door for a way back (startDoorSides: no item needed, it is at the level's
+   *  start), else the end door. options.door ('start' | 'end') forces one. */
+  function botDoor(goal, options) {
+    if (goal?.kind !== 'portal') return null;
+    const forced = options?.door;
+    if (forced === 'end' || forced === 'start') return forced;
+    return startDoorSides().includes(goal.id) && app.playResult?.startDoor !== false ? 'start' : 'end';
+  }
+
   function botWalkTo(goal, options) {
     if (!app.playResult?.ok) { app.pendingBot = { goal, options }; return; }
     app.lastBotGoal = goal;
-    const r = JSON.parse(exports.EmbedMode.BotWalkToJson(JSON.stringify({ goal, options: options ?? null })));
+    const door = botDoor(goal, options);
+    app.lastBotDoor = door;
+    const gameGoal = door === 'start' ? { kind: 'startdoor', id: goal.id } : goal;
+    const r = JSON.parse(exports.EmbedMode.BotWalkToJson(JSON.stringify({ goal: gameGoal, options: options ?? null })));
     if (!r.ok) console.error('[cloudberry-embed] botWalkTo refused:', r.error, goal);
     return r;
   }
@@ -334,6 +357,8 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     lookReady,
     rearmDoors: () => exports.EmbedMode.RearmDoorsNow(),
     startDoorSides: () => startDoorSides(),
+    features: Object.freeze({ botStartDoor: true }),
+    botDoor: (goal, options) => botDoor(goal, options),
     physicsCount: () => exports.BrowserMainLoop.PhysicsCount(),
     pause: (reason, on) => pause(reason, on),
     status: () => JSON.parse(exports.EmbedMode.Status()),

@@ -92,7 +92,9 @@ the level, refuses it loudly if the document's hash differs, and plays it. Colle
 `sendExit`; an exit the host has closed is greyed out and cannot be picked. Up at the start door offers the way back
 (the exit on the side you came in by). Held items arrive through `pollItems` (a platform type you do not hold is
 drawn as a dashed outline and cannot be landed on; the Jetpack item switches the hero's jetpack), and `botWalkTo`
-lets the computer's recording play a coin or the door for you.
+lets the computer's recording play a coin or the door for you. A bot walk to a side the start door offers (the way
+back) leaves by the start door — the player respawns at the level's start, where it stands, so it needs no item;
+every other side is left by the end door.
 
 Check coins are drawn as the Archipelago logo, read at run time from Archipelago-CC's art library (`?packs=<base
 url>` points the page at another copy); when it cannot be read they are larger purple coins. A check the host says
