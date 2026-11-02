@@ -29,7 +29,8 @@
 //                                   way back — the exit the player arrived by, and the exit on entrySide), or the bot's
 //                                   side when the bot walked to the door
 //     setPlayClock(running, {gameSeconds})  every second and on change; running is false while the game is paused
-//                                   (the exit menu is open, or the page is hidden)
+//                                   (the exit menu is open, or the page is hidden); and once STOPPED just before every
+//                                   sendExit, so the host settles the visit's game seconds up to the door
 //
 // PAYLOAD (params), version 'cloudberry-region/1':
 //   { payload: 'cloudberry-region/1',
@@ -210,6 +211,13 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
 
   function sendExit(exitName, side, door) {
     app.events.push({ kind: 'sendExit', exitName, side, door: door ?? null });
+    // The visit ends at this door: report the clock STOPPED first, with the game seconds played up to it, so the
+    // host's time drain settles the whole visit now (a door taken without the menu would otherwise leave the time
+    // since the last periodic report unbilled — up to PLAY_CLOCK_PERIOD_MS of every visit).
+    if (app.playResult?.ok) {
+      app.exitClockSettles = (app.exitClockSettles ?? 0) + 1;
+      call('setPlayClock', false, { gameSeconds: (exports.BrowserMainLoop.PhysicsCount() - app.physics0) / PHYSICS_HZ });
+    }
     call('sendExit', exitName, side);
   }
 
