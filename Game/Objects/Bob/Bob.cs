@@ -1141,7 +1141,10 @@ namespace CloudberryKingdom.Bobs
             if (Core.MyLevel.Replay)
             {
                 if (Step < MyRecord.Input.Length)
+                {
                     CurInput = MyRecord.Input[Step];
+                    RestoreRecordedPhsxState(Step);
+                }
                 
                 return;
             }
@@ -1149,6 +1152,7 @@ namespace CloudberryKingdom.Bobs
             if (MyPiece != null && Step < MyPiece.PieceLength)
             {
                 CurInput = MyRecord.Input[Step];
+                RestoreRecordedPhsxState(Step);
             }
             else
             {
@@ -1161,6 +1165,20 @@ namespace CloudberryKingdom.Bobs
         void RecordInput(int Step)
         {
             MyRecord.Input[Step] = CurInput;
+            BobPhsxNormal normal = MyPhsx as BobPhsxNormal;
+            if (normal != null && MyRecord.JumpOnLandBlocked != null && Step < MyRecord.JumpOnLandBlocked.Length)
+                MyRecord.JumpOnLandBlocked[Step] = normal.JumpOnLandBlocked;
+        }
+
+        /// <summary>
+        /// Generator state that is not input but changes how the input acts (P5a: the double-jump generator's
+        /// AutoAllowComputerToJumpOnLand). Recorded by RecordInput, restored with the input it went with.
+        /// </summary>
+        void RestoreRecordedPhsxState(int Step)
+        {
+            BobPhsxNormal normal = MyPhsx as BobPhsxNormal;
+            if (normal != null && MyRecord.JumpOnLandBlocked != null && Step < MyRecord.JumpOnLandBlocked.Length)
+                normal.JumpOnLandBlocked = MyRecord.JumpOnLandBlocked[Step];
         }
 
         public void AnimStep()

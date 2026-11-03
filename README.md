@@ -91,7 +91,8 @@ the level, refuses it loudly if the document's hash differs, and plays it. Colle
 ↓ south, ← west, or W A S D; Esc closes it; the game is paused while it is open), and the one you pick calls the host's
 `sendExit`; an exit the host has closed is greyed out and cannot be picked. Up at the start door offers the way back
 (the exit on the side you came in by). Held items arrive through `pollItems` (a platform type you do not hold is
-drawn as a dashed outline and cannot be landed on; the Jetpack item switches the hero's jetpack), and `botWalkTo`
+drawn as a dashed outline and cannot be landed on; the Jetpack item switches the hero's jetpack, and the DoubleJump item a
+multi-jump hero's extra jumps), and `botWalkTo`
 lets the computer's recording play a coin or the door for you. A bot walk to a side the start door offers (the way
 back) leaves by the start door — the player respawns at the level's start, where it stands, so it needs no item;
 every other side is left by the end door.

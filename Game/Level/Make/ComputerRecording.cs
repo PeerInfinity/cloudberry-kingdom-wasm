@@ -59,6 +59,13 @@ namespace CloudberryKingdom.Levels
         public bool[] AutoOnGround;
         public int[] t;
 
+        /// <summary>
+        /// Per step: the generating computer had BobPhsxNormal.AutoAllowComputerToJumpOnLand OFF (the double-jump
+        /// generator toggles it; it decides whether UpdateReadyToJump forces ReadyToJump for the computer). Not input, so
+        /// replay restores it from here (Bob.GetRecordedInput); false = the field's default (on). P5a.
+        /// </summary>
+        public bool[] JumpOnLandBlocked;
+
         public void Shift(Vector2 shift)
         {
             if (AutoLocs == null) return;
@@ -103,6 +110,7 @@ namespace CloudberryKingdom.Levels
 			for (int i = 0; i < Box_Size.Length; i++) Box_Size[i] = 0;
             for (int i = 0; i < AutoOnGround.Length; i++) AutoOnGround[i] = false;
             for (int i = 0; i < t.Length; i++) t[i] = 0;
+            for (int i = 0; i < JumpOnLandBlocked.Length; i++) JumpOnLandBlocked[i] = false;
         }
 
         public int Gett(int Step)
@@ -130,6 +138,7 @@ namespace CloudberryKingdom.Levels
             AutoLocs = null;
             AutoVel = null;
             AutoOnGround = null;
+            JumpOnLandBlocked = null;
 
 			uint[] _Box_BL   = new uint[Step + 1];
 			uint[] _Box_Size = new uint[Step + 1];
@@ -167,6 +176,7 @@ namespace CloudberryKingdom.Levels
 			Box_BL = null;
             Input = null;
             t = null;
+            JumpOnLandBlocked = null;
         }
 
         public void Init(int length) { Init(length, true); }
@@ -182,6 +192,7 @@ namespace CloudberryKingdom.Levels
             AutoLocs = new Vector2[length];
             AutoVel = new Vector2[length];
             Input = new BobInput[length];
+            JumpOnLandBlocked = new bool[length];
 
             t = new int[length];
 

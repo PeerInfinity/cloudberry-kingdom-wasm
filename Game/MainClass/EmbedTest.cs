@@ -13,7 +13,7 @@ namespace CloudberryKingdom
     /// Native only (build/tools/native-dev.sh): runs an embedded-mode script without a page, stepping the game's physics
     /// directly (no drawing). --embed-test script.json --out log.json. The script is a JSON array of steps:
     ///   {"do":"configure", "request":{…ck-level/2…}, "checks":[coin id…]}   generate the document, then Play it
-    ///   {"do":"items", "platforms":[…], "jetpack":bool}
+    ///   {"do":"items", "platforms":[…], "jetpack":bool, "doubleJump":bool}
     ///   {"do":"bot", "goal":{"kind":"pickup"|"portal","id":…}, "options":{…}}
     ///   {"do":"run", "steps":n} | {"do":"until", "event":"location"|"door"|"bot", "max":n}
     ///   {"do":"status"} | {"do":"stop"} | {"do":"checked", "names":[…]} | {"do":"rearm"}

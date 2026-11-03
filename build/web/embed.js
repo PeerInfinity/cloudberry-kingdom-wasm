@@ -11,7 +11,9 @@
 //         procgenPlayer) or the exit id alone: exit_id names THIS region's exit, else (a world whose exits are not
 //         linked both ways) the exit leading back to source_region is the one. The start door then offers that exit's
 //         side too — the way back by the side you came in (see entrySide below).
-//     pollItems(names)              the AP item names held → platform items + Jetpack (params.items / ap_items map names)
+//     pollItems(names)              the AP item names held → platform items + Jetpack + DoubleJump (params.items / ap_items
+//                                   map names; DoubleJump, P5a: a hero with more than one jump has one without it;
+//                                   feature test: __cloudberryEmbed.features.doubleJump)
 //     setGateStates({portals, pickups})  per side / per check: false = closed (a closed check's collection is held
 //                                   until it opens; a closed side is not offered at the door)
 //     botWalkTo(goal, options)      {kind:'pickup', id:<check name>} = respawn at the coin's piece checkpoint and play that
@@ -37,7 +39,7 @@
 //     generate: { …the RESOLVED ck-level/2 request: the document's args.request (rerolls explicit, no reroll search)… },
 //     docSha256: '<hex>',          canonical sha256 of generateText(generate) (canonicalDocText: engine.build blanked)
 //     checks: { '<check name>': <coin id>, … },   the coins that are AP location checks (names are the ap_locations keys)
-//     items: { '<AP item name>': '<game item>' }  optional; game items = the 9 platform items + 'Jetpack'; else ap_items,
+//     items: { '<AP item name>': '<game item>' }  optional; game items = the 9 platform items + 'Jetpack' + 'DoubleJump'; else ap_items,
 //                                  else the AP item name is the game item name
 //     exits: [{ side, exitName, exitId?, targetRegion?, label? }],  the region's exits, offered at the end door; label
 //                                  (optional, short) is shown under the name, e.g. what a closed exit needs; a closed exit
@@ -58,6 +60,7 @@ import { loadCheckLook, DEFAULT_PACKS_BASE } from './check-look.js';
 export const PAYLOAD_VERSION = 'cloudberry-region/1';
 const PLATFORM_ITEMS = ['MovingBlock', 'FallingBlock', 'BouncyBlock', 'GhostBlock', 'Cloud', 'Elevator', 'Pendulum', 'Conveyor', 'FlyBlob'];
 const JETPACK_ITEM = 'Jetpack';
+const DOUBLE_JUMP_ITEM = 'DoubleJump';
 const PLAY_CLOCK_PERIOD_MS = 1000;
 const PHYSICS_HZ = 60;
 
@@ -145,6 +148,7 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     const game = new Set(app.items.map((name) => (typeof map[name] === 'string' ? map[name] : name)));
     const r = JSON.parse(exports.EmbedMode.SetItemsJson(JSON.stringify({
       platforms: PLATFORM_ITEMS.filter((p) => game.has(p)), jetpack: game.has(JETPACK_ITEM),
+      doubleJump: game.has(DOUBLE_JUMP_ITEM),
     })));
     if (r.error) console.error('[cloudberry-embed] items refused:', r.error);
     app.itemsState = r;
@@ -365,7 +369,7 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     lookReady,
     rearmDoors: () => exports.EmbedMode.RearmDoorsNow(),
     startDoorSides: () => startDoorSides(),
-    features: Object.freeze({ botStartDoor: true }),
+    features: Object.freeze({ botStartDoor: true, doubleJump: true }),
     botDoor: (goal, options) => botDoor(goal, options),
     physicsCount: () => exports.BrowserMainLoop.PhysicsCount(),
     pause: (reason, on) => pause(reason, on),

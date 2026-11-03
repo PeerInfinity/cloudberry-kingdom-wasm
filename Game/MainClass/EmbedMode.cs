@@ -31,7 +31,8 @@ namespace CloudberryKingdom
     ///   - check coins are drawn by DrawCheckCoin: the page's texture (the Archipelago logo from the art library, or its own
     ///     fallback), an outline once the host says the check is checked (SetChecked / Play's checked);
     ///   - held items: platform items through PlatformSuppression, the Jetpack ability on the level's hero (zeroed
-    ///     when the level's hero has a jetpack and the Jetpack item is not held);
+    ///     when the level's hero has a jetpack and the Jetpack item is not held), and the DoubleJump ability (a hero
+    ///     with more than one jump has ONE when the DoubleJump item is not held; P5a);
     ///   - the bot (BotWalkTo): respawn at the goal's piece checkpoint and play that piece's recording (the player's own
     ///     bob under the recording's input, CompControl as the computer's replay, the snap off by default) until the coin
     ///     is collected or the door is in reach; a death, or running past the goal's tick, ends it as failed.
@@ -52,6 +53,7 @@ namespace CloudberryKingdom
         /// </summary>
         public const float CoinMatchDistance = 30;
         public const string JetpackItem = "Jetpack";
+        public const string DoubleJumpItem = "DoubleJump";
         /// <summary>Up held, as the door's prompt reads it (Door.Interact: xVec.Y > .85).</summary>
         public const float DoorUpThreshold = .85f;
 
@@ -84,6 +86,9 @@ namespace CloudberryKingdom
         static Level PlayLevel;
         static GameData PlayGame;
         static bool LevelHeroJetpack, JetpackHeld;
+        /// <summary>The played level's hero's NumJumps (1 = no double jump to gate); DoubleJumpHeld restores it (P5a).</summary>
+        static int LevelHeroJumps = 1;
+        static bool DoubleJumpHeld;
         static List<string> HeldPlatforms = new List<string>();
         static bool DoorArmed = true, StartDoorArmed;
         /// <summary>RearmDoors: both doors re-arm at the next step on which no bob holds Up.</summary>
@@ -171,6 +176,7 @@ namespace CloudberryKingdom
 
                     BobPhsxNormal hero = level.DefaultHeroType as BobPhsxNormal;
                     LevelHeroJetpack = hero != null && hero.JetPack;
+                    LevelHeroJumps = hero != null ? Math.Max(1, hero.NumJumps) : 1;
                     ApplyHeld();
 
                     var sb = new StringBuilder();
@@ -179,6 +185,7 @@ namespace CloudberryKingdom
                       .Append(",\"coins\":").Append(coins)
                       .Append(",\"checks\":").Append(Checks.Count)
                       .Append(",\"heroJetpack\":").Append(LevelHeroJetpack ? "true" : "false")
+                      .Append(",\"heroJumps\":").Append(LevelHeroJumps)
                       .Append(",\"camStartFix\":").Append(CamStartFix ? "true" : "false")
                       .Append(",\"startDoor\":").Append(level.StartDoor != null ? "true" : "false");
                     sb.Append('}');
@@ -218,23 +225,25 @@ namespace CloudberryKingdom
         // -------------------------------------------------------------------------------------------------------------
         // Items
 
-        /// <summary>json: {platforms: [item names], jetpack: bool}. Returns the state.</summary>
+        /// <summary>json: {platforms: [item names], jetpack: bool, doubleJump: bool}. Returns the state.</summary>
         public static string SetItems(string json)
         {
             try
             {
                 var platforms = new List<string>();
-                bool jetpack = false;
+                bool jetpack = false, doubleJump = false;
                 using (var doc = JsonDocument.Parse(json))
                 {
                     JsonElement e;
                     if (doc.RootElement.TryGetProperty("platforms", out e)) foreach (var p in e.EnumerateArray()) platforms.Add(p.GetString());
                     if (doc.RootElement.TryGetProperty("jetpack", out e)) jetpack = e.GetBoolean();
+                    if (doc.RootElement.TryGetProperty("doubleJump", out e)) doubleJump = e.GetBoolean();
                 }
                 foreach (string p in platforms)
                     if (PlatformSuppression.ItemIndex(p) < 0) throw new ArgumentException("unknown platform item '" + p + "'");
                 HeldPlatforms = platforms;
                 JetpackHeld = jetpack;
+                DoubleJumpHeld = doubleJump;
                 ApplyHeld();
                 return ItemsJson();
             }
@@ -247,10 +256,14 @@ namespace CloudberryKingdom
         static string ItemsJson()
         {
             return "{\"platforms\":" + GeneratorApi.JsonStrings(HeldPlatforms) + ",\"jetpack\":" + (JetpackHeld ? "true" : "false")
-                + ",\"heroJetpack\":" + (LevelHeroJetpack ? "true" : "false") + ",\"jetpackOn\":" + (JetpackOn ? "true" : "false") + "}";
+                + ",\"heroJetpack\":" + (LevelHeroJetpack ? "true" : "false") + ",\"jetpackOn\":" + (JetpackOn ? "true" : "false")
+                + ",\"doubleJump\":" + (DoubleJumpHeld ? "true" : "false") + ",\"heroJumps\":" + LevelHeroJumps
+                + ",\"jumpsOn\":" + JumpsOn + "}";
         }
 
         static bool JetpackOn { get { return LevelHeroJetpack && JetpackHeld; } }
+        /// <summary>The jumps a bob of the played level has: the hero's, or one without the DoubleJump item.</summary>
+        static int JumpsOn { get { return LevelHeroJumps > 1 && !DoubleJumpHeld ? 1 : LevelHeroJumps; } }
 
         static void ApplyHeld()
         {
@@ -259,12 +272,14 @@ namespace CloudberryKingdom
                 foreach (Bob bob in PlayLevel.Bobs) ApplyAbilities(bob.MyPhsx);
         }
 
-        /// <summary>The Jetpack item on a bob of the played level (Bob.SetHeroPhsx calls it for every new phsx; not during a generation).</summary>
+        /// <summary>The Jetpack and DoubleJump items on a bob of the played level (Bob.SetHeroPhsx calls it for every new phsx;
+        /// not during a generation).</summary>
         public static void ApplyAbilities(BobPhsx phsx)
         {
             if (!Active || PlayLevel == null || GeneratorApi.Generating) return;
             BobPhsxNormal normal = phsx as BobPhsxNormal;
             if (normal != null && LevelHeroJetpack) normal.JetPack = JetpackHeld;
+            if (normal != null && LevelHeroJumps > 1) normal.NumJumps = JumpsOn;
         }
 
         // -------------------------------------------------------------------------------------------------------------

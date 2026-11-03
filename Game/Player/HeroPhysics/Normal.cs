@@ -330,6 +330,17 @@ namespace CloudberryKingdom
 
 
         protected bool AutoAllowComputerToJumpOnLand = true;
+
+        /// <summary>
+        /// The generator's AutoAllowComputerToJumpOnLand, inverted: recorded per step with the computer's input and
+        /// restored on replay (ComputerRecording.JumpOnLandBlocked), so a replayed computer readies its jumps as the
+        /// generating one did. Without it a 2-jump hero's replay double-jumps on a held A where generation did not. P5a.
+        /// </summary>
+        public bool JumpOnLandBlocked
+        {
+            get { return !AutoAllowComputerToJumpOnLand; }
+            set { AutoAllowComputerToJumpOnLand = !value; }
+        }
         public virtual void UpdateReadyToJump()
         {
             if (AutoAllowComputerToJumpOnLand)
