@@ -46,6 +46,8 @@ namespace CloudberryKingdom
         public const int BotSlackTicks = 120;
         /// <summary>Walking to the door after the final recording: no input within this many px of its x.</summary>
         public const float DoorSteerDeadZone = 20;
+        /// <summary>P5b ladder instrument: ticks allowed after piece k's recording to reach piece k+1's start.</summary>
+        public const int LadderSlackTicks = 600;
         /// <summary>
         /// A played coin matches the document's coin (its objects[] position, written right after the level's reset) when it
         /// is the nearest coin and this close: coins hover, so a position read at another tick is a few px off; coins sit on an
@@ -79,6 +81,11 @@ namespace CloudberryKingdom
             public int Piece, Tick, Limit, Steps;
             public CheckCoin Check;
             public bool Snap, Armed, Reached, Steering;
+            // P5b ladder instrument (native --embed-test only): after piece k's recording, a reactive policy crosses the
+            // ladder to piece k+1: on landing wait LadderWait ticks, then hold jump LadderHold ticks; LadderPause stops
+            // the direction while waiting on a platform.
+            public int LadderWait, LadderHold, LadderTarget = -1, LadderAirDuty = 4;
+            public bool LadderPause;
         }
 
         static readonly List<CheckCoin> Checks = new List<CheckCoin>();
@@ -433,6 +440,10 @@ namespace CloudberryKingdom
                     {
                         JsonElement s;
                         if (e.TryGetProperty("snap", out s)) walk.Snap = s.GetBoolean();
+                        if (e.TryGetProperty("wait", out s)) walk.LadderWait = s.GetInt32();
+                        if (e.TryGetProperty("hold", out s)) walk.LadderHold = s.GetInt32();
+                        if (e.TryGetProperty("pause", out s)) walk.LadderPause = s.GetBoolean();
+                        if (e.TryGetProperty("airDuty", out s)) walk.LadderAirDuty = s.GetInt32();
                     }
                 }
                 if (walk.Kind == "pickup")
@@ -458,6 +469,16 @@ namespace CloudberryKingdom
                     walk.Tick = -1;
                     walk.Limit = BotSlackTicks;
                 }
+#if !BROWSER
+                else if (walk.Kind == "ladder")
+                {
+                    // Native instrument only: piece k's recording, then the ladder to piece k+1 (P5b).
+                    walk.Piece = int.Parse(walk.Id, CultureInfo.InvariantCulture);
+                    if (walk.Piece < 0 || walk.Piece + 1 >= level.LevelPieces.Count) throw new ArgumentException("ladder: piece " + walk.Id + " has no next piece");
+                    walk.Tick = -1;
+                    walk.Limit = level.LevelPieces[walk.Piece].PieceLength + LadderSlackTicks;
+                }
+#endif
                 else throw new ArgumentException("unknown goal kind '" + walk.Kind + "'");
 
                 StopBot(null);
@@ -597,6 +618,9 @@ namespace CloudberryKingdom
                     };
                 }
             }
+#if !BROWSER
+            if (walk.Kind == "ladder" && LadderStep(level, walk)) return;
+#endif
             if (walk.Steering && level.Bobs.Any(b => b.Dying || b.Dead)) { StopBot("died"); return; }
             if (walk.Kind == "portal" && door != null && level.Bobs.Any(b => door.BobInReach(b)))
             {
@@ -607,6 +631,44 @@ namespace CloudberryKingdom
             }
             if (walk.Steps > walk.Limit) StopBot("timeout");
         }
+
+#if !BROWSER
+        /// <summary>The ladder instrument's step; true when the walk ended. Target = where piece k+1's recording starts.</summary>
+        static bool LadderStep(Level level, BotWalk walk)
+        {
+            Bob b = level.Bobs[0];
+            LevelPiece next = level.LevelPieces[walk.Piece + 1];
+            Vector2 target = next.Recording[0].AutoLocs[0];
+            if (!walk.Steering && level.CurPhsxStep - b.IndexOffset >= level.CurPiece.PieceLength)
+            {
+                walk.Steering = true;
+                int ground = 0, holdLeft = 0, air = 0;
+                b.CompControl = false;
+                b.MyRecord = null;
+                b.CodeControl = true;
+                b.ControlFunc = count =>
+                {
+                    bool on = b.MyPhsx.OnGround;
+                    ground = on ? ground + 1 : 0;
+                    if (on && holdLeft == 0 && ground == walk.LadderWait + 1) holdLeft = Math.Max(1, walk.LadderHold);
+                    b.CurInput.A_Button = holdLeft > 0;
+                    if (holdLeft > 0) holdLeft--;
+                    bool waiting = on && ground <= walk.LadderWait;
+                    air = on ? 0 : air + 1;
+                    // In the air: right on LadderAirDuty of every 4 ticks (4 = always), so a jump can be shortened.
+                    bool right = on ? !(walk.LadderPause && waiting) : (air % 4) < walk.LadderAirDuty;
+                    b.CurInput.xVec = new Vector2(right ? 1 : 0, 0);
+                };
+            }
+            if (walk.Steering && (b.Dying || b.Dead)) { StopBot("died"); return true; }
+            if (walk.Steering && b.MyPhsx.OnGround && b.Core.Data.Position.X >= target.X - 50 && Math.Abs(b.Core.Data.Position.Y - target.Y) < 300)
+            {
+                StopBot("reached");
+                return true;
+            }
+            return false;
+        }
+#endif
 
         class EmbedDriver : GameObject
         {
