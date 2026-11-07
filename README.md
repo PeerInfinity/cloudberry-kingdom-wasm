@@ -95,7 +95,11 @@ drawn as a dashed outline and cannot be landed on; the Jetpack item switches the
 multi-jump hero's extra jumps), and `botWalkTo`
 lets the computer's recording play a coin or the door for you. A bot walk to a side the start door offers (the way
 back) leaves by the start door — the player respawns at the level's start, where it stands, so it needs no item;
-every other side is left by the end door.
+every other side is left by the end door. The bot plays ON: from where the player is, collecting coins on the way, and
+it keeps playing after a goal to its recording's end. It respawns only at the elevator ladder between two pieces (no
+recording crosses it: a short note on screen says "ladder: skipping to checkpoint k"), after a death (the game's own
+respawn at the last checkpoint passed; a few restarts, then the walk fails by name), or for a goal behind it. Each of
+these is reported to the host's optional `botStatus`.
 
 Check coins are drawn as the Archipelago logo, read at run time from Archipelago-CC's art library (`?packs=<base
 url>` points the page at another copy); when it cannot be read they are larger purple coins. A check the host says

@@ -33,9 +33,10 @@ namespace CloudberryKingdom
     ///   - held items: platform items through PlatformSuppression, the Jetpack ability on the level's hero (zeroed
     ///     when the level's hero has a jetpack and the Jetpack item is not held), and the DoubleJump ability (a hero
     ///     with more than one jump has ONE when the DoubleJump item is not held; P5a);
-    ///   - the bot (BotWalkTo): respawn at the goal's piece checkpoint and play that piece's recording (the player's own
-    ///     bob under the recording's input, CompControl as the computer's replay, the snap off by default) until the coin
-    ///     is collected or the door is in reach; a death, or running past the goal's tick, ends it as failed.
+    ///   - the bot (BotWalkTo, P7b): the player's own bob plays the piece recordings ON (CompControl as the computer's
+    ///     replay, the snap off by default) from where it is to the coin or the door, and keeps playing after it; it respawns
+    ///     only at a ladder (botNote), after a death or a miss (the game's respawn at the last checkpoint passed, bounded),
+    ///     for a goal behind it, or for the way back (see "The bot" below).
     /// The page takes the events every frame (TakeEvents) and makes the bridge calls.
     /// </summary>
     public static partial class EmbedMode
@@ -69,16 +70,10 @@ namespace CloudberryKingdom
             public Vector2 StartPos;
             public Coin Coin;
             public bool Sent;
+            /// <summary>Collected in this configure (a later walk to it is reached at once: the bob does not go back for it).</summary>
+            public bool Collected;
             /// <summary>The host says this check is checked (Play's checked, SetChecked): drawn as an outline.</summary>
             public bool Checked;
-        }
-
-        class BotWalk
-        {
-            public string Kind, Id;
-            public int Piece, Tick, Limit, Steps;
-            public CheckCoin Check;
-            public bool Snap, Armed, Reached, Steering;
         }
 
         static readonly List<CheckCoin> Checks = new List<CheckCoin>();
@@ -169,6 +164,7 @@ namespace CloudberryKingdom
                     Checks.AddRange(checks);
                     Events.Clear();
                     Bot = null;
+                    Riding = null;
                     DoorArmed = true;
                     StartDoorArmed = false;
                     RearmPending = false;
@@ -291,10 +287,11 @@ namespace CloudberryKingdom
             foreach (var c in Checks)
             {
                 if (c.StartPos != coin.Core.StartData.Position) continue;
+                c.Collected = true;
                 if (Bot != null && Bot.Check == c) Bot.Reached = true;
                 if (c.Sent) return;
                 c.Sent = true;
-                Events.Add("{\"kind\":\"location\",\"name\":" + GeneratorApi.JsonStr(c.Name) + ",\"bot\":" + (Bot != null ? "true" : "false")
+                Events.Add("{\"kind\":\"location\",\"name\":" + GeneratorApi.JsonStr(c.Name) + ",\"bot\":" + (Bot != null || Riding != null ? "true" : "false")
                     + ",\"coin\":" + Vec(coin.Core.StartData.Position) + ",\"bob\":" + Vec(bob.Core.Data.Position) + "}");
                 return;
             }
@@ -414,9 +411,58 @@ namespace CloudberryKingdom
         }
 
         // -------------------------------------------------------------------------------------------------------------
-        // The bot
+        // The bot (P7b: continuous playback)
+        //
+        // The bob plays the piece recordings ON. A walk's goal is reached by playing on from where the bob is, and the bob
+        // keeps playing after it (the RIDE) until its recording runs out; then it PARKS (control released where the
+        // recording left it). A coin on the way is collected in passing. The bob respawns only where no recording carries it:
+        //   ladder   the end of piece k's recording while the goal is in a later piece: respawn at checkpoint k+1 (no
+        //            recording crosses the elevator ladder between pieces; P7c may walk it). A botNote says so.
+        //   restart  reason 'died': a death (a just-received item changed a platform or the hero, so the recording no longer
+        //            fits) is the game's own death and respawn at the last checkpoint the bob passed (the current piece's),
+        //            then that piece's recording again. Reason 'missed': the goal's tick passed (or its piece's recording ran
+        //            out) without it: the same restart, without a death.
+        //   rewind   the goal is behind the bob (an earlier piece, or a tick of this piece already played): respawn at the
+        //            goal's piece checkpoint, one the bob has passed.
+        //   idle     the bob is not on a recording (the first walk, a keyboard player's bob, a parked bob that died):
+        //            restart at the current piece's checkpoint (the last one passed).
+        //   start    a walk to a start-door side (the way back, P3a): restart the level at the start door (item-free).
+        // A walk's restarts are bounded: after BotMaxRetries of them, or the same failure twice (the same piece, tick and items:
+        // a replay repeats it), the walk ends 'died' / 'timeout' with exhausted:true and the reason, by name.
+        // options.respawn: true = the pre-P7b walk (respawn at the goal's piece checkpoint), for A/B measurements.
 
-        /// <summary>json: {goal: {kind: 'pickup'|'portal'|'startdoor', id}, options: {snap}}. Returns {ok, piece, tick} or {ok:false, error}.</summary>
+        /// <summary>A walk restarts at most this many times (deaths and misses together) before it fails by name.</summary>
+        public const int BotMaxRetries = 3;
+        /// <summary>After a death the game's own respawn is waited for this long, then forced.</summary>
+        public const int BotRespawnWaitTicks = 600;
+
+        class BotWalk
+        {
+            public string Kind, Id;
+            /// <summary>The goal's piece and the recording tick that reaches it (-1: the piece's end, then the door).</summary>
+            public int Piece, Tick, Steps, PieceSteps, Retries, MaxRetries = BotMaxRetries;
+            public CheckCoin Check;
+            public bool Snap, Reached, Respawn, Armed;
+            public string LastFailure;
+        }
+
+        enum RideState { AwaitRespawn, Playing, Steering, Parked }
+
+        /// <summary>The bob's playback, which outlives the walk that started it.</summary>
+        class Ride
+        {
+            public RideState State;
+            public int Piece;
+            public bool Snap;
+            /// <summary>&gt;= 0: a death at this step; the recording waits for the game's respawn (the step count restarts).</summary>
+            public int DeathStep = -1, WaitSteps;
+        }
+
+        static Ride Riding;
+        static int StatWalks, StatContinued, StatDeaths, StatParkedDeaths;
+        static readonly SortedDictionary<string, int> StatRespawns = new SortedDictionary<string, int>();
+
+        /// <summary>json: {goal: {kind: 'pickup'|'portal'|'startdoor', id}, options: {snap, respawn, retries}}. Returns {ok, piece, tick, how}.</summary>
         public static string BotWalkTo(string json)
         {
             try
@@ -433,6 +479,8 @@ namespace CloudberryKingdom
                     {
                         JsonElement s;
                         if (e.TryGetProperty("snap", out s)) walk.Snap = s.GetBoolean();
+                        if (e.TryGetProperty("respawn", out s)) walk.Respawn = s.GetBoolean();
+                        if (e.TryGetProperty("retries", out s)) walk.MaxRetries = Math.Max(0, s.GetInt32());
                     }
                 }
                 if (walk.Kind == "pickup")
@@ -441,31 +489,31 @@ namespace CloudberryKingdom
                     if (walk.Check == null) throw new ArgumentException("no check coin '" + walk.Id + "'");
                     walk.Piece = walk.Check.Piece;
                     walk.Tick = walk.Check.Tick;
-                    walk.Limit = walk.Tick + BotSlackTicks;
                 }
                 else if (walk.Kind == "portal")
                 {
                     walk.Piece = level.LevelPieces.Count - 1;
                     walk.Tick = -1;
-                    walk.Limit = level.LevelPieces[walk.Piece].PieceLength + BotSlackTicks;
                 }
                 else if (walk.Kind == "startdoor")
                 {
-                    // The way back (P3a): respawn at the level's start (piece 0's checkpoint is the start door) and leave by
-                    // the start door, the side in id. The page decides that a side is a start-door side (startDoorSides).
+                    // The way back (P3a): restart the level (piece 0's checkpoint is the start door) and leave by the start
+                    // door, the side in id. The page decides that a side is a start-door side (startDoorSides).
                     if (level.StartDoor == null) throw new InvalidOperationException("the level has no start door");
                     walk.Piece = 0;
                     walk.Tick = -1;
-                    walk.Limit = BotSlackTicks;
                 }
                 else throw new ArgumentException("unknown goal kind '" + walk.Kind + "'");
 
-                StopBot(null);
-                // Respawn at the goal's piece checkpoint (the piece's start, where its recording starts).
-                level.SetCurrentPiece(walk.Piece);
-                level.SetToReset = true;
+                EndWalk(null, null);   // a walk in progress ends; the ride goes on
+                StatWalks++;
                 Bot = walk;
-                return "{\"ok\":true,\"piece\":" + walk.Piece + ",\"tick\":" + walk.Tick + "}";
+                string how;
+                if (walk.Kind == "startdoor") { RespawnRide(level, 0, "start", null); Riding = null; how = "start"; }
+                else if (walk.Kind == "pickup" && walk.Check.Collected) { walk.Reached = true; how = "collected"; }
+                else if (walk.Respawn) { RespawnRide(level, walk.Piece, "goal", null); how = "respawn"; }
+                else how = Continue(level, walk);
+                return "{\"ok\":true,\"piece\":" + walk.Piece + ",\"tick\":" + walk.Tick + ",\"how\":" + GeneratorApi.JsonStr(how) + "}";
             }
             catch (Exception e)
             {
@@ -473,7 +521,215 @@ namespace CloudberryKingdom
             }
         }
 
-        public static void BotStop() { StopBot("stopped"); }
+        /// <summary>Where a walk starts: on from the ride when the goal is ahead of it, else a respawn (rewind / idle).</summary>
+        static string Continue(Level level, BotWalk walk)
+        {
+            Ride r = Riding;
+            if (r != null && r.State == RideState.Parked && !ParkHolds(level, r)) r = Riding = null;
+            if (r == null)
+            {
+                int cur = level.LevelPieces.IndexOf(level.CurPiece);
+                if (cur < 0 || cur > walk.Piece) { RespawnRide(level, walk.Piece, "rewind", null); return "rewind"; }
+                RespawnRide(level, cur, "idle", null);
+                return "idle";
+            }
+            bool ahead = r.Piece < walk.Piece;
+            if (r.Piece == walk.Piece)
+            {
+                if (walk.Tick < 0) ahead = true;   // the door: on through this piece's end, then the steering
+                else if (r.State == RideState.AwaitRespawn) ahead = true;
+                // Not yet collected and not yet past the miss rule's tick (a coin the bob is about to collect counts as ahead).
+                else if (r.State == RideState.Playing) ahead = RecTick(level) <= walk.Tick + BotSlackTicks;
+            }
+            if (!ahead) { RespawnRide(level, walk.Piece, "rewind", null); return "rewind"; }
+            r.Snap = walk.Snap;
+            if (r.State == RideState.Playing) Level.ReplaySnapDisabled = !walk.Snap;
+            StatContinued++;
+            return "continue";
+        }
+
+        static int RecTick(Level level)
+        {
+            return level.Bobs.Count > 0 ? level.CurPhsxStep - level.Bobs[0].IndexOffset : level.CurPhsxStep;
+        }
+
+        /// <summary>
+        /// A parked bob is still at its piece's end: alive and in that piece (no respawn since). Where exactly does not matter
+        /// (the piece-end elevator carries it): a parked bob is only ever sent on (the ladder, or the steering to the door).
+        /// </summary>
+        static bool ParkHolds(Level level, Ride r)
+        {
+            if (level.SetToReset || level.Bobs.Count == 0 || level.LevelPieces.IndexOf(level.CurPiece) != r.Piece) return false;
+            Bob bob = level.Bobs[0];
+            return !bob.Dead && !bob.Dying;
+        }
+
+        static void ReleaseBobs(Level level)
+        {
+            Level.ReplayProbe = false;
+            Level.ReplaySnapDisabled = false;
+            if (level != null)
+                foreach (Bob bob in level.Bobs) { bob.CompControl = false; bob.MyRecord = null; bob.CodeControl = false; bob.ControlFunc = null; }
+        }
+
+        /// <summary>A respawn at a piece's checkpoint (the engine's reset at that piece); the recording starts once it is done.</summary>
+        static void RespawnRide(Level level, int piece, string kind, string noteFields)
+        {
+            ReleaseBobs(level);
+            level.SetCurrentPiece(piece);
+            level.SetToReset = true;
+            Riding = new Ride { State = RideState.AwaitRespawn, Piece = piece, Snap = Bot != null && Bot.Snap };
+            Respawned(kind);
+            Note(kind, piece, noteFields);
+        }
+
+        static void Respawned(string kind)
+        {
+            int n;
+            StatRespawns.TryGetValue(kind, out n);
+            StatRespawns[kind] = n + 1;
+        }
+
+        static string NoteText(string kind, int piece, string reason, int attempt, int maxAttempts)
+        {
+            // For people, piece k starts at checkpoint k, and piece 0 at the start (the start door, no checkpoint). The
+            // Archipelago-CC status strip names them the same way from the fields (P7a).
+            string cp = piece <= 0 ? "the start" : "checkpoint " + piece;
+            switch (kind)
+            {
+                case "ladder": return "ladder: skipping to " + cp;
+                case "restart": return (reason == "died" ? "died" : "missed the goal") + ": restarting from " + cp + " (attempt " + attempt + "/" + maxAttempts + ")";
+                case "rewind": return "the goal is behind: back to " + cp;
+                case "idle": return piece <= 0 ? "starting at the start" : "starting from " + cp;
+                case "start": return "back to the start door";
+                case "goal": return "respawn at " + cp;
+                case "died": return "died between walks: back at " + cp;
+                default: return kind;
+            }
+        }
+
+        /// <summary>Queues {kind:'botNote', note, piece, …fields, goal, text}.</summary>
+        static void Note(string kind, int piece, string fields, string reason = null, int attempt = 0, int maxAttempts = 0)
+        {
+            BotWalk walk = Bot;
+            var sb = new StringBuilder();
+            sb.Append("{\"kind\":\"botNote\",\"note\":").Append(GeneratorApi.JsonStr(kind)).Append(",\"piece\":").Append(piece);
+            if (fields != null) sb.Append(fields);
+            if (reason != null) sb.Append(",\"reason\":").Append(GeneratorApi.JsonStr(reason)).Append(",\"attempt\":").Append(attempt).Append(",\"maxAttempts\":").Append(maxAttempts);
+            sb.Append(",\"goal\":");
+            if (walk == null) sb.Append("null");
+            else sb.Append("{\"kind\":").Append(GeneratorApi.JsonStr(walk.Kind)).Append(",\"id\":").Append(GeneratorApi.JsonStr(walk.Id)).Append('}');
+            sb.Append(",\"text\":").Append(GeneratorApi.JsonStr(NoteText(kind, piece, reason, attempt, maxAttempts))).Append('}');
+            Events.Add(sb.ToString());
+        }
+
+        static void StartRecording(Level level, Ride r)
+        {
+            r.Piece = level.LevelPieces.IndexOf(level.CurPiece);   // the game's respawn decides (the last checkpoint passed)
+            foreach (Bob bob in level.Bobs)
+            {
+                bob.CompControl = true;
+                bob.MyRecord = level.CurPiece.Recording[bob.MyPieceIndex];
+                bob.IndexOffset = 0;
+            }
+            Level.ReplayProbe = true;           // a death is counted (and handled by the bot), not acted on
+            Level.ReplayDeaths = 0;
+            Level.ReplaySnapDisabled = !r.Snap;
+            r.State = RideState.Playing;
+            if (Bot != null) Bot.PieceSteps = 0;
+        }
+
+        static void Park(Level level, Ride r)
+        {
+            ReleaseBobs(level);
+            r.State = RideState.Parked;
+        }
+
+        static void Ladder(Level level, Ride r)
+        {
+            int from = r.Piece, to = r.Piece + 1;
+            RespawnRide(level, to, "ladder", ",\"fromPiece\":" + from + ",\"toPiece\":" + to);
+        }
+
+        static void BeginSteering(Level level, Ride r, Door door)
+        {
+            // The final piece's recording is over and the door is not in reach yet. After its recording the engine feeds the
+            // computer "right + jump", which can carry the bob over a low door; walk to the door instead.
+            ReleaseBobs(level);
+            r.State = RideState.Steering;
+            foreach (Bob bob in level.Bobs)
+            {
+                Bob b = bob;
+                b.CodeControl = true;
+                b.ControlFunc = count =>
+                {
+                    float dx = door.Pos.X - b.Core.Data.Position.X;
+                    b.CurInput.xVec = new Vector2(Math.Abs(dx) < DoorSteerDeadZone ? 0 : Math.Sign(dx), 0);
+                };
+            }
+        }
+
+        static string ItemsKey()
+        {
+            return string.Join("+", HeldPlatforms.OrderBy(p => p, StringComparer.Ordinal)) + (JetpackHeld ? "+J" : "") + (DoubleJumpHeld ? "+D" : "");
+        }
+
+        /// <summary>A death or a miss on the ride: a restart from the last checkpoint passed, or the walk fails by name.</summary>
+        static void OnFailure(Level level, Ride r, BotWalk walk, string what, int rec)
+        {
+            bool died = what == "died";
+            int piece = level.LevelPieces.IndexOf(level.CurPiece);
+            bool dying = level.Bobs.Any(b => b.Dead || b.Dying);
+            ReleaseBobs(level);
+            if (died)
+            {
+                if (walk != null) StatDeaths++; else StatParkedDeaths++;
+                if (!dying) foreach (Bob bob in level.Bobs) bob.Die(Bob.BobDeathType.Other, true, true);
+            }
+            if (walk == null)
+            {
+                Riding = null;
+                if (died) Note("died", piece, null);
+                return;
+            }
+            string key = piece + ":" + rec + ":" + ItemsKey();
+            string reason = null;
+            if (walk.LastFailure == key)
+                reason = "the same " + (died ? "death" : "miss") + " twice (piece " + piece + ", tick " + rec + ", the same items): a replay would repeat it";
+            else if (walk.Retries >= walk.MaxRetries)
+                reason = walk.MaxRetries + " restarts used";
+            walk.LastFailure = key;
+            if (reason != null)
+            {
+                Riding = null;
+                EndWalk(died ? "died" : "timeout", reason);
+                return;
+            }
+            walk.Retries++;
+            int attempt = walk.Retries + 1, max = walk.MaxRetries + 1;
+            if (died)
+            {
+                // The game's own death and respawn (at the current piece's checkpoint); the recording starts after it.
+                Riding = new Ride { State = RideState.AwaitRespawn, Piece = piece, Snap = walk.Snap, DeathStep = Math.Max(1, level.CurPhsxStep) };
+                Respawned("restart:died");
+                Note("restart", piece, null, "died", attempt, max);
+            }
+            else
+            {
+                ReleaseBobs(level);
+                level.SetCurrentPiece(piece);
+                level.SetToReset = true;
+                Riding = new Ride { State = RideState.AwaitRespawn, Piece = piece, Snap = walk.Snap };
+                Respawned("restart:missed");
+                Note("restart", piece, null, "missed", attempt, max);
+            }
+        }
+
+        public static void BotStop()
+        {
+            EndWalk("stopped", null);
+            EndRide();
+        }
 
         /// <summary>
         /// Leaves the played level for the API's empty level (a new configure starts with this, so a region that is being
@@ -481,7 +737,8 @@ namespace CloudberryKingdom
         /// </summary>
         public static void Stop()
         {
-            StopBot(null);
+            EndWalk(null, null);
+            EndRide();
             Checks.Clear();
             Events.Clear();
             if (PlayGame != null && Tools.CurGameData == PlayGame)
@@ -494,18 +751,31 @@ namespace CloudberryKingdom
             PlayLevel = null;
         }
 
-        static void StopBot(string why)
+        static void EndRide()
+        {
+            if (Riding == null) return;
+            Riding = null;
+            ReleaseBobs(PlayLevel);
+        }
+
+        /// <summary>Ends the walk (why null: silently, as a new walk replaces it). The ride is left alone.</summary>
+        static void EndWalk(string why, string reason)
         {
             if (Bot == null) return;
             BotWalk walk = Bot;
             Bot = null;
-            Level.ReplayProbe = false;
-            Level.ReplaySnapDisabled = false;
-            if (PlayLevel != null)
-                foreach (Bob bob in PlayLevel.Bobs) { bob.CompControl = false; bob.MyRecord = null; bob.CodeControl = false; bob.ControlFunc = null; }
-            if (why != null)
-                Events.Add("{\"kind\":\"bot\",\"goal\":{\"kind\":" + GeneratorApi.JsonStr(walk.Kind) + ",\"id\":" + GeneratorApi.JsonStr(walk.Id)
-                    + "},\"result\":" + GeneratorApi.JsonStr(why) + ",\"piece\":" + walk.Piece + ",\"steps\":" + walk.Steps + ",\"goalTick\":" + walk.Tick + "}");
+            if (walk.Kind == "startdoor") ReleaseBobs(PlayLevel);
+            if (why == null) return;
+            Level level = PlayLevel;
+            int piece = level != null ? level.LevelPieces.IndexOf(level.CurPiece) : -1;
+            var sb = new StringBuilder();
+            sb.Append("{\"kind\":\"bot\",\"goal\":{\"kind\":").Append(GeneratorApi.JsonStr(walk.Kind)).Append(",\"id\":").Append(GeneratorApi.JsonStr(walk.Id))
+              .Append("},\"result\":").Append(GeneratorApi.JsonStr(why)).Append(",\"piece\":").Append(piece).Append(",\"goalPiece\":").Append(walk.Piece)
+              .Append(",\"steps\":").Append(walk.Steps).Append(",\"goalTick\":").Append(walk.Tick).Append(",\"retries\":").Append(walk.Retries);
+            if (reason != null) sb.Append(",\"exhausted\":true,\"reason\":").Append(GeneratorApi.JsonStr(reason));
+            string goal = walk.Kind == "pickup" ? "coin " + walk.Id : walk.Kind == "startdoor" ? "the start door (" + walk.Id + ")" : "the door (" + walk.Id + ")";
+            sb.Append(",\"text\":").Append(GeneratorApi.JsonStr("walk to " + goal + ": " + why + (reason != null ? " — " + reason : ""))).Append('}');
+            Events.Add(sb.ToString());
         }
 
         /// <summary>Every physics step of the played level (EmbedDriver).</summary>
@@ -538,74 +808,113 @@ namespace CloudberryKingdom
                 else if (start != null && StartDoorArmed && start.BobInReach(bob)) OnStartDoor(start);
             }
 
+            StepBot(level, door, start);
+        }
+
+        static void StepBot(Level level, Door door, Door start)
+        {
             BotWalk walk = Bot;
-            if (walk == null) return;
+            if (walk != null)
+            {
+                walk.Steps++;
+                if (walk.Kind == "pickup" && walk.Reached) { EndWalk("reached", null); walk = null; }
+                else if (walk.Kind == "startdoor") { StepStartDoor(level, walk, start); return; }
+            }
+            Ride r = Riding;
+            if (r == null) return;
+            switch (r.State)
+            {
+                case RideState.AwaitRespawn:
+                    if (r.DeathStep >= 0)
+                    {
+                        r.WaitSteps++;
+                        if (level.CurPhsxStep >= r.DeathStep)
+                        {
+                            if (r.WaitSteps > BotRespawnWaitTicks && !level.SetToReset)
+                            {
+                                level.SetCurrentPiece(r.Piece);
+                                level.SetToReset = true;
+                            }
+                            return;
+                        }
+                        r.DeathStep = -1;
+                    }
+                    if (level.SetToReset || level.Bobs.Count == 0 || level.Bobs.Any(b => b.Dead || b.Dying)) return;
+                    StartRecording(level, r);
+                    return;
+
+                case RideState.Playing:
+                {
+                    if (walk != null) walk.PieceSteps++;
+                    int rec = RecTick(level);
+                    if (Level.ReplayDeaths > 0) { OnFailure(level, r, walk, "died", Level.ReplayFirstDeathTick); return; }
+                    if (walk != null && walk.Kind == "pickup" && r.Piece == walk.Piece && rec > walk.Tick + BotSlackTicks) { OnFailure(level, r, walk, "missed", rec); return; }
+                    if (rec < level.CurPiece.PieceLength) return;
+                    // The recording is over.
+                    if (walk != null && walk.Piece > r.Piece) Ladder(level, r);
+                    else if (walk != null && walk.Kind == "portal" && door != null) BeginSteering(level, r, door);
+                    else if (walk != null) OnFailure(level, r, walk, "missed", rec);   // its piece's recording ran out without the coin
+                    // No walk: the ride plays to its end. The final piece's end is the door (the steering, which stands there
+                    // without a door event: only a walk to a side leaves); any other piece's is the ladder (park there).
+                    else if (door != null && r.Piece == level.LevelPieces.Count - 1) BeginSteering(level, r, door);
+                    else Park(level, r);
+                    return;
+                }
+
+                case RideState.Steering:
+                    if (walk != null) walk.PieceSteps++;
+                    if (level.Bobs.Any(b => b.Dying || b.Dead)) { OnFailure(level, r, walk, "died", RecTick(level)); return; }
+                    if (walk != null && walk.Kind != "portal") { Park(level, r); return; }
+                    if (walk == null)
+                    {
+                        if (door == null || level.Bobs.Any(b => door.BobInReach(b))) Park(level, r);
+                        return;
+                    }
+                    if (door != null && level.Bobs.Any(b => door.BobInReach(b)))
+                    {
+                        EndWalk("reached", null);
+                        Park(level, r);
+                        DoorArmed = true;
+                        OnDoor(door, true);
+                        return;
+                    }
+                    if (walk.PieceSteps > level.CurPiece.PieceLength + BotSlackTicks) OnFailure(level, r, walk, "missed", RecTick(level));
+                    return;
+
+                case RideState.Parked:
+                    if (!ParkHolds(level, r))
+                    {
+                        if (level.Bobs.Any(b => b.Dead || b.Dying)) { StatParkedDeaths++; Note("died", r.Piece, null); }
+                        Riding = null;
+                        if (walk != null) Continue(level, walk);
+                        return;
+                    }
+                    if (walk == null) return;
+                    if (walk.Piece > r.Piece) Ladder(level, r);
+                    else if (walk.Kind == "portal" && door != null) BeginSteering(level, r, door);
+                    else OnFailure(level, r, walk, "missed", RecTick(level));
+                    return;
+            }
+        }
+
+        /// <summary>The way back (P3a): the respawn at the level's start puts the bob at the start door.</summary>
+        static void StepStartDoor(Level level, BotWalk walk, Door start)
+        {
             if (!walk.Armed)
             {
                 if (level.SetToReset || level.Bobs.Count == 0) return;
-                if (walk.Kind == "startdoor") { walk.Armed = true; return; }   // no recording: the bob stands at the start door
-                // The respawn happened: the player's bob plays the piece's recording, as the computer's replay does.
-                foreach (Bob bob in level.Bobs)
-                {
-                    bob.CompControl = true;
-                    bob.MyRecord = level.CurPiece.Recording[bob.MyPieceIndex];
-                    bob.IndexOffset = 0;
-                }
-                Level.ReplayProbe = true;           // a death is counted (and ends the walk), not acted on
-                Level.ReplayDeaths = 0;
-                Level.ReplaySnapDisabled = !walk.Snap;
                 walk.Armed = true;
                 return;
             }
-            walk.Steps++;
-            if (Level.ReplayDeaths > 0)
+            if (level.Bobs.Any(b => b.Dying || b.Dead)) { EndWalk("died", null); return; }
+            if (start != null && level.Bobs.Any(b => start.BobInReach(b)))
             {
-                StopBot("died");
-                foreach (Bob bob in level.Bobs) bob.Die(Bob.BobDeathType.Other, true, true);
+                EndWalk("reached", null);
+                StartDoorArmed = false;
+                Events.Add("{\"kind\":\"door\",\"door\":\"start\",\"bot\":true}");
                 return;
             }
-            if (walk.Kind == "pickup" && walk.Reached) { StopBot("reached"); return; }
-            if (walk.Kind == "startdoor")
-            {
-                if (level.Bobs.Any(b => b.Dying || b.Dead)) { StopBot("died"); return; }
-                if (start != null && level.Bobs.Any(b => start.BobInReach(b)))
-                {
-                    StopBot("reached");
-                    StartDoorArmed = false;
-                    Events.Add("{\"kind\":\"door\",\"door\":\"start\",\"bot\":true}");
-                    return;
-                }
-                if (walk.Steps > walk.Limit) StopBot("timeout");
-                return;
-            }
-            if (walk.Kind == "portal" && !walk.Steering && door != null && level.Bobs.Count > 0
-                && level.CurPhsxStep - level.Bobs[0].IndexOffset >= level.CurPiece.PieceLength)
-            {
-                // The final piece's recording is over and the door is not in reach yet. After its recording the engine
-                // feeds the computer "right + jump", which can carry the bob over a low door; walk to the door instead.
-                walk.Steering = true;
-                foreach (Bob bob in level.Bobs)
-                {
-                    Bob b = bob;
-                    b.CompControl = false;
-                    b.MyRecord = null;
-                    b.CodeControl = true;
-                    b.ControlFunc = count =>
-                    {
-                        float dx = door.Pos.X - b.Core.Data.Position.X;
-                        b.CurInput.xVec = new Vector2(Math.Abs(dx) < DoorSteerDeadZone ? 0 : Math.Sign(dx), 0);
-                    };
-                }
-            }
-            if (walk.Steering && level.Bobs.Any(b => b.Dying || b.Dead)) { StopBot("died"); return; }
-            if (walk.Kind == "portal" && door != null && level.Bobs.Any(b => door.BobInReach(b)))
-            {
-                StopBot("reached");
-                DoorArmed = true;
-                OnDoor(door, true);
-                return;
-            }
-            if (walk.Steps > walk.Limit) StopBot("timeout");
+            if (walk.Steps > BotSlackTicks) EndWalk("timeout", null);
         }
 
         class EmbedDriver : GameObject
@@ -670,7 +979,17 @@ namespace CloudberryKingdom
                 sb.Append(",\"bot\":");
                 if (Bot == null) sb.Append("null");
                 else sb.Append("{\"kind\":").Append(GeneratorApi.JsonStr(Bot.Kind)).Append(",\"id\":").Append(GeneratorApi.JsonStr(Bot.Id))
-                       .Append(",\"armed\":").Append(Bot.Armed ? "true" : "false").Append(",\"steps\":").Append(Bot.Steps).Append('}');
+                       .Append(",\"armed\":").Append(Bot.Armed ? "true" : "false").Append(",\"steps\":").Append(Bot.Steps)
+                       .Append(",\"retries\":").Append(Bot.Retries).Append('}');
+                sb.Append(",\"ride\":");
+                if (Riding == null) sb.Append("null");
+                else sb.Append("{\"state\":").Append(GeneratorApi.JsonStr(Riding.State.ToString())).Append(",\"piece\":").Append(Riding.Piece)
+                       .Append(",\"rec\":").Append(RecTick(level)).Append('}');
+                sb.Append(",\"botStats\":{\"walks\":").Append(StatWalks).Append(",\"continued\":").Append(StatContinued)
+                  .Append(",\"deaths\":").Append(StatDeaths).Append(",\"parkedDeaths\":").Append(StatParkedDeaths).Append(",\"respawns\":{");
+                bool firstKind = true;
+                foreach (var kv in StatRespawns) { if (!firstKind) sb.Append(','); firstKind = false; sb.Append(GeneratorApi.JsonStr(kv.Key)).Append(':').Append(kv.Value); }
+                sb.Append("}}");
                 sb.Append(",\"items\":").Append(ItemsJson());
                 sb.Append(",\"look\":{\"texture\":").Append(CheckTex != null ? "true" : "false").Append(",\"size\":")
                   .Append(CheckTexSize.ToString("R", CultureInfo.InvariantCulture)).Append(",\"drawnUnchecked\":").Append(DrawnUnchecked)

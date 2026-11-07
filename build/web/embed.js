@@ -16,12 +16,19 @@
 //                                   feature test: __cloudberryEmbed.features.doubleJump)
 //     setGateStates({portals, pickups})  per side / per check: false = closed (a closed check's collection is held
 //                                   until it opens; a closed side is not offered at the door)
-//     botWalkTo(goal, options)      {kind:'pickup', id:<check name>} = respawn at the coin's piece checkpoint and play that
-//                                   piece's recording to the coin; {kind:'portal', id:<side>} = respawn at the last piece's
-//                                   checkpoint and play to the end door (then leave by that side) — except a side the
-//                                   START door offers (startDoorSides: the way back, P3a): then respawn at the level's start,
-//                                   at the start door, and leave by it (no item needed). options: {snap, door:'start'|'end'}
-//                                   (door forces one; feature test: __cloudberryEmbed.features.botStartDoor).
+//     botWalkTo(goal, options)      {kind:'pickup', id:<check name>} = play ON to the coin; {kind:'portal', id:<side>} = play
+//                                   on to the end door (then leave by that side) — except a side the START door offers
+//                                   (startDoorSides: the way back, P3a): then restart the level, at the start door, and
+//                                   leave by it (no item needed). Playing on (P7b, features.botContinuous): the bob plays
+//                                   the piece recordings from where it is, collects coins on the way, and keeps playing
+//                                   after a goal to its recording's end (the last piece's: to the end door, without
+//                                   leaving). It respawns only at a LADDER (the end of piece k → checkpoint k+1: no
+//                                   recording crosses it), after a DEATH (the game's respawn at the last checkpoint passed,
+//                                   then that piece's recording again; bounded, then the walk fails by name), or for a goal
+//                                   BEHIND it. Each respawn is a botNote event, drawn as a short on-screen note.
+//                                   options: {snap, door:'start'|'end', respawn, retries} (door forces one; respawn: true =
+//                                   the pre-P7b respawn at the goal's piece; retries = the restart bound, default 3;
+//                                   feature tests: __cloudberryEmbed.features.botStartDoor, .botContinuous).
 //     botStop(), reset(), setHostState(state) (kept; nothing reads it yet)
 //     setCheckedLocations(names)    OPTIONAL (P1b): the check names the host has as checked; their coins are drawn as
 //                                   outlines (configure's checkedLocations seeds the same set)
@@ -30,6 +37,11 @@
 //     sendExit(<exitName>, <side>)  chosen in the exit menu (Up at the end door: every exit; Up at the start door: the
 //                                   way back — the exit the player arrived by, and the exit on entrySide), or the bot's
 //                                   side when the bot walked to the door
+//     botStatus(event)              OPTIONAL (P7b; called only when the host has it): every bot event as it happens —
+//                                   {kind:'bot', goal, result:'reached'|'died'|'timeout'|'stopped', piece (the bob's),
+//                                   goalPiece, steps, goalTick, retries, exhausted?, reason?, text} and {kind:'botNote',
+//                                   note:'ladder'|'restart'|'rewind'|'idle'|'start'|'died'|'goal', piece, fromPiece?, toPiece?,
+//                                   reason?, attempt?, maxAttempts?, goal, text}. Pieces are 0-based; text is for display.
 //     setPlayClock(running, {gameSeconds})  every second and on change; running is false while the game is paused
 //                                   (the exit menu is open, or the page is hidden); and once STOPPED just before every
 //                                   sendExit, so the host settles the visit's game seconds up to the door
@@ -80,7 +92,7 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     config: null, payload: null, playResult: null, refusal: null, configures: 0,
     items: [], gates: { portals: {}, pickups: {} }, heldLocations: new Set(), sent: [], exits: [],
     pendingBot: null, lastBotGoal: null, hostState: null, events: [], physics0: 0, clockRunning: null,
-    checked: new Set(), menu: null, paused: new Set(), look: null,
+    checked: new Set(), menu: null, paused: new Set(), look: null, botNotes: [],
   };
   let configureChain = Promise.resolve();
   let configureSeq = 0;
@@ -91,6 +103,23 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
   document.getElementById('stage')?.appendChild(statusEl);
   const show = (text, bad = false) => { statusEl.textContent = text; statusEl.style.color = bad ? '#f88' : '#ddd'; };
   show('Cloudberry Kingdom — waiting for a region…');
+
+  // The bot's on-screen note (P7b): a short line over the stage at each respawn the bot makes (a ladder, a restart after a
+  // death, a goal behind it), shown for BOT_NOTE_MS. P7c may replace the ladder's with a real walk-through.
+  const BOT_NOTE_MS = 2500;
+  const noteEl = document.createElement('div');
+  noteEl.id = 'embed-bot-note';
+  noteEl.hidden = true;
+  noteEl.style.cssText = 'position:absolute;left:50%;top:8%;transform:translateX(-50%);max-width:calc(100% - 16px);padding:4px 12px;border-radius:4px;background:rgba(0,0,0,.72);color:#fff;font:14px/1.4 sans-serif;pointer-events:none;text-align:center';
+  document.getElementById('stage')?.appendChild(noteEl);
+  let noteTimer = null;
+  const showNote = (text, bad = false) => {
+    noteEl.textContent = text;
+    noteEl.style.color = bad ? '#f99' : '#fff';
+    noteEl.hidden = false;
+    clearTimeout(noteTimer);
+    noteTimer = setTimeout(() => { noteEl.hidden = true; }, BOT_NOTE_MS);
+  };
 
   // Pausing (the page stops stepping the game: main.js): while the exit menu is open, and while the page is hidden.
   const pause = (reason, on) => {
@@ -297,11 +326,29 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
           if (app.gates.pickups?.[ev.name] === false) app.heldLocations.add(ev.name);
           else sendLocation(ev.name);
         } else if (ev.kind === 'door') onDoor(ev);
-        else if (ev.kind === 'bot') console.log('[cloudberry-embed] bot:', JSON.stringify(ev));
+        else if (ev.kind === 'bot' || ev.kind === 'botNote') onBotEvent(ev);
       }
     }
   }
   requestAnimationFrame(pump);
+
+  /** A bot event: logged, the note drawn (not for the first walk's start, which is no jump), and passed to the host. */
+  function onBotEvent(ev) {
+    if (ev.kind === 'bot') {
+      if (ev.exhausted) {
+        console.error('[cloudberry-embed] bot walk FAILED: ' + ev.text);
+        showNote(ev.text, true);
+      } else console.log('[cloudberry-embed] bot:', JSON.stringify(ev));
+    } else {
+      app.botNotes.push(ev);
+      console.log('[cloudberry-embed] bot note: ' + ev.text);
+      if (ev.note !== 'idle') showNote(ev.text);
+    }
+    const f = bridge().botStatus;
+    if (typeof f === 'function') {
+      try { f({ ...ev }); } catch (e) { console.error('[cloudberry-embed] __swfBridge.botStatus threw', e); }
+    }
+  }
 
   function playClock() {
     const running = !!app.playResult?.ok && !document.hidden && app.paused.size === 0;
@@ -369,7 +416,8 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     lookReady,
     rearmDoors: () => exports.EmbedMode.RearmDoorsNow(),
     startDoorSides: () => startDoorSides(),
-    features: Object.freeze({ botStartDoor: true, doubleJump: true }),
+    features: Object.freeze({ botStartDoor: true, doubleJump: true, botContinuous: true }),
+    botNoteElement: noteEl,
     botDoor: (goal, options) => botDoor(goal, options),
     physicsCount: () => exports.BrowserMainLoop.PhysicsCount(),
     pause: (reason, on) => pause(reason, on),

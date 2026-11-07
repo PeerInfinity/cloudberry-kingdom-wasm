@@ -119,6 +119,8 @@
         sendExit: (portalId, side) => log('exit', `sendExit(${JSON.stringify(portalId)}, ${JSON.stringify(side)})`),
         setPlayClock: (running, stats) => { sim.clock = { running, ...stats }; },
         requestHost: (request) => log('exit', `requestHost(${JSON.stringify(request)})`),
+        // P7b: the bot's events (walk results and its respawn notes: ladder, restart, rewind).
+        botStatus: (ev) => log(ev.exhausted ? 'bad' : 'bot', `botStatus ${ev.kind}${ev.note ? ':' + ev.note : ''}: ${ev.text}`),
       });
     }
 
