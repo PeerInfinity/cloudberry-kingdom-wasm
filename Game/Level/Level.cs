@@ -1718,6 +1718,8 @@ namespace CloudberryKingdom.Levels
 
         /// <summary>Generator API replay check: count snaps and would-be deaths instead of acting on deaths; optionally skip the snap.</summary>
         public static bool ReplayProbe, ReplaySnapDisabled, ReplayRunPastEnd;
+        /// <summary>P7c (the embed's ladder walk): with ReplayProbe, a code-controlled bob's death is counted, not acted on.</summary>
+        public static bool ReplayCodeProbe;
         public static int ReplaySnaps, ReplayDeaths, ReplayFirstDeathTick;
         public static float ReplayMaxDrift;
         public static string ReplayFirstDeathKind;

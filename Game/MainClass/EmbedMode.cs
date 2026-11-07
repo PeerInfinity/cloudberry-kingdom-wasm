@@ -165,6 +165,7 @@ namespace CloudberryKingdom
                     Events.Clear();
                     Bot = null;
                     Riding = null;
+                    ResetLadders();
                     DoorArmed = true;
                     StartDoorArmed = false;
                     RearmPending = false;
@@ -283,7 +284,7 @@ namespace CloudberryKingdom
 
         public static void OnCoin(Coin coin, Bob bob)
         {
-            if (!Active || coin.Core.MyLevel != PlayLevel) return;
+            if (!Active || coin.Core.MyLevel != PlayLevel || Rehearsing) return;
             foreach (var c in Checks)
             {
                 if (c.StartPos != coin.Core.StartData.Position) continue;
@@ -446,7 +447,7 @@ namespace CloudberryKingdom
             public string LastFailure;
         }
 
-        enum RideState { AwaitRespawn, Playing, Steering, Parked }
+        enum RideState { AwaitRespawn, Playing, Steering, Parked, Crossing }
 
         /// <summary>The bob's playback, which outlives the walk that started it.</summary>
         class Ride
@@ -481,6 +482,10 @@ namespace CloudberryKingdom
                         if (e.TryGetProperty("snap", out s)) walk.Snap = s.GetBoolean();
                         if (e.TryGetProperty("respawn", out s)) walk.Respawn = s.GetBoolean();
                         if (e.TryGetProperty("retries", out s)) walk.MaxRetries = Math.Max(0, s.GetInt32());
+                        // P7c: the ladder walk ('cross') or the P7b respawn ('respawn'); the rehearsal's budget.
+                        if (e.TryGetProperty("ladder", out s)) { LadderMode = s.GetString() == "cross" ? "cross" : "respawn"; LadderPlans.Clear(); }
+                        if (e.TryGetProperty("ladderBudget", out s)) { LadderBudget = Math.Max(1, s.GetInt32()); LadderPlans.Clear(); }
+                        if (e.TryGetProperty("ladderKeep", out s)) { LadderKeep = Math.Max(1, s.GetInt32()); LadderPlans.Clear(); }
                     }
                 }
                 if (walk.Kind == "pickup")
@@ -575,6 +580,8 @@ namespace CloudberryKingdom
         /// <summary>A respawn at a piece's checkpoint (the engine's reset at that piece); the recording starts once it is done.</summary>
         static void RespawnRide(Level level, int piece, string kind, string noteFields)
         {
+            Cross = null;
+            Level.ReplayCodeProbe = false;
             ReleaseBobs(level);
             level.SetCurrentPiece(piece);
             level.SetToReset = true;
@@ -643,12 +650,6 @@ namespace CloudberryKingdom
         {
             ReleaseBobs(level);
             r.State = RideState.Parked;
-        }
-
-        static void Ladder(Level level, Ride r)
-        {
-            int from = r.Piece, to = r.Piece + 1;
-            RespawnRide(level, to, "ladder", ",\"fromPiece\":" + from + ",\"toPiece\":" + to);
         }
 
         static void BeginSteering(Level level, Ride r, Door door)
@@ -753,6 +754,8 @@ namespace CloudberryKingdom
 
         static void EndRide()
         {
+            Cross = null;
+            Level.ReplayCodeProbe = false;
             if (Riding == null) return;
             Riding = null;
             ReleaseBobs(PlayLevel);
@@ -881,6 +884,11 @@ namespace CloudberryKingdom
                     if (walk.PieceSteps > level.CurPiece.PieceLength + BotSlackTicks) OnFailure(level, r, walk, "missed", RecTick(level));
                     return;
 
+                case RideState.Crossing:
+                    if (walk != null) walk.PieceSteps++;
+                    StepCrossing(level, r);
+                    return;
+
                 case RideState.Parked:
                     if (!ParkHolds(level, r))
                     {
@@ -986,7 +994,7 @@ namespace CloudberryKingdom
                 else sb.Append("{\"state\":").Append(GeneratorApi.JsonStr(Riding.State.ToString())).Append(",\"piece\":").Append(Riding.Piece)
                        .Append(",\"rec\":").Append(RecTick(level)).Append('}');
                 sb.Append(",\"botStats\":{\"walks\":").Append(StatWalks).Append(",\"continued\":").Append(StatContinued)
-                  .Append(",\"deaths\":").Append(StatDeaths).Append(",\"parkedDeaths\":").Append(StatParkedDeaths).Append(",\"respawns\":{");
+                  .Append(",\"deaths\":").Append(StatDeaths).Append(",\"parkedDeaths\":").Append(StatParkedDeaths).Append(",\"ladder\":").Append(LadderStatusJson()).Append(",\"respawns\":{");
                 bool firstKind = true;
                 foreach (var kv in StatRespawns) { if (!firstKind) sb.Append(','); firstKind = false; sb.Append(GeneratorApi.JsonStr(kv.Key)).Append(':').Append(kv.Value); }
                 sb.Append("}}");

@@ -858,7 +858,7 @@ namespace CloudberryKingdom.Bobs
         {
             if (Dying) return;
 
-            if (CompControl && Level.ReplayProbe)
+            if ((CompControl || (CodeControl && Level.ReplayCodeProbe)) && Level.ReplayProbe)
             {
                 if (Level.ReplayDeaths++ == 0)
                 {

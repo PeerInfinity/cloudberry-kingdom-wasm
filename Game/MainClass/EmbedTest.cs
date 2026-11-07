@@ -75,6 +75,7 @@ namespace CloudberryKingdom
             for (ran = 0; ran < n; ran++)
             {
                 Tools.CurGameData.PhsxStep();
+                if (ran % 2000 == 1999 && Environment.GetEnvironmentVariable("CK_LADDER_DEBUG") == "1") Console.WriteLine("[embed-test] step " + ran + " " + EmbedMode.StatusJson().Substring(0, 400));
                 string ev = EmbedMode.TakeEvents();
                 if (ev.Length == 0) continue;
                 bool stop = false;
