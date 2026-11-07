@@ -22,11 +22,14 @@
 //                                   leave by it (no item needed). Playing on (P7b, features.botContinuous): the bob plays
 //                                   the piece recordings from where it is, collects coins on the way, and keeps playing
 //                                   after a goal to its recording's end (the last piece's: to the end door, without
-//                                   leaving). It respawns only at a LADDER (the end of piece k → checkpoint k+1: no
-//                                   recording crosses it), after a DEATH (the game's respawn at the last checkpoint passed,
+//                                   leaving). At a LADDER (the end of piece k; no recording crosses it) the bob WALKS
+//                                   ACROSS (P7c, features.ladderWalk): a walk planned at configure with the engine's own
+//                                   physics; if there is none, or it goes wrong, or the re-sync at checkpoint k+1 would
+//                                   move the bob more than 150 px, it falls back to the respawn at checkpoint k+1 (the P7b
+//                                   ladder; options.ladder: 'respawn' always takes it). It respawns after a DEATH (the game's respawn at the last checkpoint passed,
 //                                   then that piece's recording again; bounded, then the walk fails by name), or for a goal
 //                                   BEHIND it. Each respawn is a botNote event, drawn as a short on-screen note.
-//                                   options: {snap, door:'start'|'end', respawn, retries} (door forces one; respawn: true =
+//                                   options: {snap, door:'start'|'end', respawn, retries, ladder} (door forces one; respawn: true =
 //                                   the pre-P7b respawn at the goal's piece; retries = the restart bound, default 3;
 //                                   feature tests: __cloudberryEmbed.features.botStartDoor, .botContinuous).
 //     botStop(), reset(), setHostState(state) (kept; nothing reads it yet)
@@ -40,8 +43,11 @@
 //     botStatus(event)              OPTIONAL (P7b; called only when the host has it): every bot event as it happens —
 //                                   {kind:'bot', goal, result:'reached'|'died'|'timeout'|'stopped', piece (the bob's),
 //                                   goalPiece, steps, goalTick, retries, exhausted?, reason?, text} and {kind:'botNote',
-//                                   note:'ladder'|'restart'|'rewind'|'idle'|'start'|'died'|'goal', piece, fromPiece?, toPiece?,
-//                                   reason?, attempt?, maxAttempts?, goal, text}. Pieces are 0-based; text is for display.
+//                                   note:'ladder'|'ladderWalk'|'restart'|'rewind'|'idle'|'start'|'died'|'goal', piece, fromPiece?,
+//                                   toPiece?, reason?, attempt?, maxAttempts?, goal, text}. Pieces are 0-based; text is for
+//                                   display. A ladder (P7c): 'ladderWalk' when the walk across starts, then 'ladder' with
+//                                   crossing:'crossed' (steps, resync = px the re-sync moved the bob) or crossing:'fellBack'
+//                                   (why; the respawn at checkpoint k+1); with options.ladder 'respawn', 'ladder' alone.
 //     setPlayClock(running, {gameSeconds})  every second and on change; running is false while the game is paused
 //                                   (the exit menu is open, or the page is hidden); and once STOPPED just before every
 //                                   sendExit, so the host settles the visit's game seconds up to the door
@@ -239,8 +245,21 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     // report billed one second more than the visit played (P7b: measured, the host's first charge 16 ms before it).
     playClock();
     applyItems();
+    planLadders();
     show(`region ${config.regionId ?? '?'} — ${result.pieces} pieces, ${checks.length} checks, ${result.coins} coins`);
     if (app.pendingBot) { const p = app.pendingBot; app.pendingBot = null; botWalkTo(p.goal, p.options); }
+  }
+
+  /** P7c: every ladder's walk-through planned now, at load (with the held items), so the bot never plans mid-play. The
+   *  added load time is app.ladderPlan.ms (and status().botStats.ladder.planMs). */
+  function planLadders() {
+    const t0 = performance.now();
+    let r;
+    try { r = JSON.parse(exports.EmbedMode.PlanLaddersJson()); } catch (e) { r = { ok: false, error: String(e) }; }
+    r.wallMs = Math.round(performance.now() - t0);
+    app.ladderPlan = r;
+    if (!r.ok) console.error('[cloudberry-embed] ladder planning failed:', r.error);
+    else if (r.ladders > 0) console.log(`[cloudberry-embed] ladders planned: ${r.crossable}/${r.plans} walkable, ${r.wallMs} ms`);
   }
 
   function exitFor(side) {
@@ -434,7 +453,7 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     lookReady,
     rearmDoors: () => exports.EmbedMode.RearmDoorsNow(),
     startDoorSides: () => startDoorSides(),
-    features: Object.freeze({ botStartDoor: true, doubleJump: true, botContinuous: true }),
+    features: Object.freeze({ botStartDoor: true, doubleJump: true, botContinuous: true, ladderWalk: true }),
     botNoteElement: noteEl,
     botDoor: (goal, options) => botDoor(goal, options),
     physicsCount: () => exports.BrowserMainLoop.PhysicsCount(),

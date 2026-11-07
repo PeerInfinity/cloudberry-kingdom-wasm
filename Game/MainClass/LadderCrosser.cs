@@ -62,6 +62,8 @@ namespace CloudberryKingdom
         public const int LadderArriveMax = 90;
         /// <summary>The re-sync picks the recording's nearest standing tick among its first this many after TargetTick.</summary>
         public const int LadderResyncTicks = 120;
+        /// <summary>⚖ Robert 2026-11-07: a re-sync that would move the bob more than this falls back to the respawn + note.</summary>
+        public const float LadderResyncCap = 150;
         /// <summary>Default rehearsal budget: at most this many tries; stop once this many have crossed.</summary>
         public const int LadderDefaultBudget = 144, LadderDefaultKeep = 3;
         /// <summary>The rehearsal's tries stop after this many level steps.</summary>
@@ -166,12 +168,15 @@ namespace CloudberryKingdom
             public MovingPlatform Platform;
             public int Steps, StageSteps, Rest, Stand, ResyncTick;
             public Vector2 Goal;
+            public float ResyncDistance;
         }
 
-        /// <summary>'cross' (P7c) or 'respawn' (P7b: the respawn at checkpoint k+1 and its note).</summary>
-        static string LadderMode = "respawn";
+        /// <summary>'cross' (P7c, the default) or 'respawn' (P7b: the respawn at checkpoint k+1 and its note; options.ladder).</summary>
+        static string LadderMode = "cross";
         static int LadderBudget = LadderDefaultBudget, LadderKeep = LadderDefaultKeep;
-        static readonly Dictionary<int, LadderPlan> LadderPlans = new Dictionary<int, LadderPlan>();
+        /// <summary>Plans by "piece:abilities" (PlanLadders at configure; a missing one is made when the ladder is reached).</summary>
+        static readonly Dictionary<string, LadderPlan> LadderPlans = new Dictionary<string, LadderPlan>();
+        static double LadderPlanMs;
         static Crossing Cross;
         static bool Rehearsing;
         static int StatCrossed, StatFellBack, StatRehearsals;
@@ -463,7 +468,75 @@ namespace CloudberryKingdom
         /// The rehearsal of ladder k on the played level; the level is left reset at checkpoint k with piece k's recording
         /// replayed to its end, ready for the live walk.
         /// </summary>
-        static LadderPlan Rehearse(Level level, int k)
+        static void SetLadderOption<T>(ref T field, T value)
+        {
+            if (EqualityComparer<T>.Default.Equals(field, value)) return;
+            field = value;
+            LadderPlans.Clear();
+        }
+
+        static string PlanKey(int k) { return k + ":" + AbilityKey(); }
+
+        /// <summary>
+        /// Plans every ladder of the played level at configure (the page calls it after the items), so no plan is made
+        /// mid-play: for the held abilities, and on a Jetpack / Double Jump level also for the other state of that ability
+        /// (an item arriving later finds its plan made). The level is left as Play left it (reset at the start).
+        /// Returns {ok, ladders, plans, crossable, ms}.
+        /// </summary>
+        public static string PlanLadders()
+        {
+            try
+            {
+                Level level = PlayLevel;
+                if (level == null || Tools.CurLevel != level) throw new InvalidOperationException("no level is being played");
+                var sw = Stopwatch.StartNew();
+                int ladders = Math.Max(0, level.LevelPieces.Count - 1), made = 0, crossable = 0;
+                if (LadderMode == "cross" && ladders > 0)
+                {
+                    bool holdJ = JetpackHeld, holdD = DoubleJumpHeld;
+                    var states = new List<bool[]> { new[] { holdJ, holdD } };
+                    if (LevelHeroJetpack) states.Add(new[] { !holdJ, holdD });
+                    if (LevelHeroJumps > 1) states.Add(new[] { holdJ, !holdD });
+                    try
+                    {
+                        foreach (var st in states)
+                        {
+                            JetpackHeld = st[0];
+                            DoubleJumpHeld = st[1];
+                            for (int k = 0; k < ladders; k++)
+                            {
+                                if (LadderPlans.ContainsKey(PlanKey(k))) continue;
+                                LadderPlan plan = Rehearse(level, k, false);
+                                LadderPlans[PlanKey(k)] = plan;
+                                LadderLog.Add(PlanJson(plan, "configure"));
+                                made++;
+                                if (plan.Validated != null) crossable++;
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        JetpackHeld = holdJ;
+                        DoubleJumpHeld = holdD;
+                        // Back to the level's start, as Play left it.
+                        ReleaseBobs(level);
+                        level.SetCurrentPiece(0);
+                        level.ResetAll(false, true);
+                        ApplyHeld();
+                        Events.Clear();
+                    }
+                }
+                LadderPlanMs = sw.Elapsed.TotalMilliseconds;
+                return "{\"ok\":true,\"ladders\":" + ladders + ",\"plans\":" + made + ",\"crossable\":" + crossable
+                       + ",\"ms\":" + LadderPlanMs.ToString("0.0", CultureInfo.InvariantCulture) + "}";
+            }
+            catch (Exception e)
+            {
+                return "{\"ok\":false,\"error\":" + GeneratorApi.JsonStr(e.GetType().Name + ": " + e.Message) + "}";
+            }
+        }
+
+        static LadderPlan Rehearse(Level level, int k, bool restore)
         {
             var sw = Stopwatch.StartNew();
             var plan = new LadderPlan { Piece = k, Target = LadderTarget(level, k), TargetTick = LadderTargetTick(level, k), Abilities = AbilityKey() };
@@ -528,11 +601,15 @@ namespace CloudberryKingdom
             }
             finally
             {
-                // Put the level back exactly: reset at checkpoint k and replay piece k (the live bob continues from here).
+                // Mid-play: put the level back exactly, reset at checkpoint k and piece k replayed (the live bob continues
+                // from there). At configure, PlanLadders resets the level to its start afterwards.
                 level.SuppressCheckpoints = holdSuppress;
                 level.TimeLimit = holdTimeLimit;
-                int rs = ReplayPieceSilently(level, k);
-                if (rs >= 0) { plan.ReplaySteps += rs; plan.Steps += rs; }
+                if (restore)
+                {
+                    int rs = ReplayPieceSilently(level, k);
+                    if (rs >= 0) { plan.ReplaySteps += rs; plan.Steps += rs; }
+                }
                 Level.ReplayCodeProbe = false;
                 Rehearsing = false;
                 CoreSoundWad.SuppressSounds = holdSounds;
@@ -609,6 +686,7 @@ namespace CloudberryKingdom
                 if (r != null) { t.Result = r; break; }
             }
             if (t.Result == null) t.Result = "timeout";
+            if (t.Result == "crossed" && !ResyncReachable(level, b, plan)) t.Result = "far";
             if (t.Result != "crossed")
                 Debug("try " + t.Policy + " " + LadderPolicies[t.Policy] + " key " + t.Key + " -> " + t.Result + " at " + t.Steps + " pos " + b.Core.Data.Position + " on " + Describe(b.MyPhsx.ObjectLandedOn) + " death " + Level.ReplayFirstDeathKind);
             plan.Tries.Add(t);
@@ -644,11 +722,12 @@ namespace CloudberryKingdom
                 return;
             }
             LadderPlan plan;
-            if (!LadderPlans.TryGetValue(from, out plan) || plan.Abilities != AbilityKey())
+            if (!LadderPlans.TryGetValue(PlanKey(from), out plan))
             {
-                plan = Rehearse(level, from);
-                LadderPlans[from] = plan;
-                LadderLog.Add(PlanJson(plan));
+                // Not planned at configure (the held abilities changed since): plan now (one frame's hitch).
+                plan = Rehearse(level, from, true);
+                LadderPlans[PlanKey(from)] = plan;
+                LadderLog.Add(PlanJson(plan, "late"));
             }
             if (plan.Refusal != null) { LadderRespawn(level, r, plan.Refusal); return; }
             // The rehearsal left the bob at the end of piece k's recording (or the level was not touched): settle, then
@@ -812,9 +891,10 @@ namespace CloudberryKingdom
                 case CrossStage.Arrive:
                 {
                     bool arrived = Math.Abs(c.Goal.X - b.Core.Data.Position.X) <= LadderArrive + 1 && b.MyPhsx.OnGround;
-                    // Arrived, or the walk left the ground (a ledge): the re-sync at once, before the bob falls.
-                    if (arrived || !b.MyPhsx.OnGround) return "arrived";
-                    return c.StageSteps >= LadderArriveMax ? "arrived" : null;   // stood on piece k+1; the reset moves it the rest
+                    // Arrived, or the walk left the ground (a ledge): the re-sync at once, before the bob falls. A re-sync
+                    // that would move the bob more than LadderResyncCap px is no walk-through: fall back (Robert's cap).
+                    if (arrived || !b.MyPhsx.OnGround || c.StageSteps >= LadderArriveMax) return ResyncCheck(level, b, c);
+                    return null;
                 }
             }
             return null;
@@ -846,6 +926,31 @@ namespace CloudberryKingdom
                 b.CurInput.A_Button = false;
                 b.CurInput.xVec = new Vector2(Math.Abs(dx) <= LadderArrive ? 0 : Math.Sign(dx), 0);
             };
+        }
+
+        /// <summary>A try that stands on piece k+1 counts only if the re-sync can stay within the cap: a standing tick of
+        /// the recording (in its window) level with the bob (walkable), or one within the cap.</summary>
+        static bool ResyncReachable(Level level, Bob b, LadderPlan plan)
+        {
+            LevelPiece next = level.LevelPieces[plan.Piece + 1];
+            ComputerRecording rec = next.Recording[0];
+            int n = Math.Min(Math.Min(next.PieceLength, rec.AutoOnGround.Length), plan.TargetTick + LadderResyncTicks);
+            Vector2 p = b.Core.Data.Position;
+            for (int i = plan.TargetTick; i < n; i++)
+            {
+                if (!rec.AutoOnGround[i]) continue;
+                Vector2 d = rec.AutoLocs[i] - p;
+                if (Math.Abs(d.Y) < 30 || d.Length() <= LadderResyncCap) return true;
+            }
+            return false;
+        }
+
+        static string ResyncCheck(Level level, Bob b, Crossing c)
+        {
+            Vector2 at = level.LevelPieces[c.Plan.Piece + 1].Recording[0].AutoLocs[c.ResyncTick];
+            float d = (at - b.Core.Data.Position).Length();
+            c.ResyncDistance = d;
+            return d <= LadderResyncCap ? "arrived" : "the re-sync would move the bob " + d.ToString("0", CultureInfo.InvariantCulture) + " px (over " + LadderResyncCap + ")";
         }
 
         static float Floor(LadderPlan plan) { return Math.Min(plan.Pose.Y, plan.Target.Y) - LadderFallDepth; }
@@ -893,10 +998,10 @@ namespace CloudberryKingdom
             }
         }
 
-        static string PlanJson(LadderPlan p)
+        static string PlanJson(LadderPlan p, string when)
         {
             var sb = new StringBuilder();
-            sb.Append("{\"piece\":").Append(p.Piece).Append(",\"abilities\":").Append(GeneratorApi.JsonStr(p.Abilities))
+            sb.Append("{\"piece\":").Append(p.Piece).Append(",\"when\":").Append(GeneratorApi.JsonStr(when)).Append(",\"abilities\":").Append(GeneratorApi.JsonStr(p.Abilities))
               .Append(",\"refusal\":").Append(p.Refusal == null ? "null" : GeneratorApi.JsonStr(p.Refusal))
               .Append(",\"pose\":").Append(Vec(p.Pose)).Append(",\"target\":").Append(Vec(p.Target))
               .Append(",\"support\":").Append(p.Exact ? "\"exact\"" : p.Across ? "\"across\"" : p.Emitter == null ? "\"static\"" : "\"carried\"")
@@ -931,6 +1036,7 @@ namespace CloudberryKingdom
             var sb = new StringBuilder();
             sb.Append("{\"mode\":").Append(GeneratorApi.JsonStr(LadderMode)).Append(",\"crossed\":").Append(StatCrossed)
               .Append(",\"fellBack\":").Append(StatFellBack).Append(",\"rehearsals\":").Append(StatRehearsals)
+              .Append(",\"planMs\":").Append(LadderPlanMs.ToString("0.0", CultureInfo.InvariantCulture))
               .Append(",\"stage\":").Append(Cross == null ? "null" : GeneratorApi.JsonStr(Cross.Stage.ToString()))
               .Append(",\"plans\":[").Append(string.Join(",", LadderLog)).Append("]}");
             return sb.ToString();
@@ -940,6 +1046,7 @@ namespace CloudberryKingdom
         {
             LadderPlans.Clear();
             LadderLog.Clear();
+            LadderPlanMs = 0;
             Cross = null;
         }
     }

@@ -482,11 +482,12 @@ namespace CloudberryKingdom
                         if (e.TryGetProperty("snap", out s)) walk.Snap = s.GetBoolean();
                         if (e.TryGetProperty("respawn", out s)) walk.Respawn = s.GetBoolean();
                         if (e.TryGetProperty("retries", out s)) walk.MaxRetries = Math.Max(0, s.GetInt32());
-                        // P7c: the ladder walk ('cross') or the P7b respawn ('respawn'); the rehearsal's budget.
-                        if (e.TryGetProperty("ladder", out s)) { LadderMode = s.GetString() == "cross" ? "cross" : "respawn"; LadderPlans.Clear(); }
-                        if (e.TryGetProperty("ladderBudget", out s)) { LadderBudget = Math.Max(1, s.GetInt32()); LadderPlans.Clear(); }
-                        if (e.TryGetProperty("ladderKeep", out s)) { LadderKeep = Math.Max(1, s.GetInt32()); LadderPlans.Clear(); }
-                        if (e.TryGetProperty("ladderSteps", out s)) { LadderStepScale = Math.Max(.1f, s.GetSingle()); LadderPlans.Clear(); }
+                        // P7c: the ladder walk ('cross', the default) or the P7b respawn ('respawn'); the rehearsal's budget
+                        // (measurement). A changed value drops the plans made at configure (the next ladder plans anew).
+                        if (e.TryGetProperty("ladder", out s)) SetLadderOption(ref LadderMode, s.GetString() == "respawn" ? "respawn" : "cross");
+                        if (e.TryGetProperty("ladderBudget", out s)) SetLadderOption(ref LadderBudget, Math.Max(1, s.GetInt32()));
+                        if (e.TryGetProperty("ladderKeep", out s)) SetLadderOption(ref LadderKeep, Math.Max(1, s.GetInt32()));
+                        if (e.TryGetProperty("ladderSteps", out s)) SetLadderOption(ref LadderStepScale, Math.Max(.1f, s.GetSingle()));
                     }
                 }
                 if (walk.Kind == "pickup")
@@ -1016,6 +1017,7 @@ namespace CloudberryKingdom
         [JSExport] public static void StopNow() { Stop(); }
         [JSExport] public static string TakeEventsJson() { return TakeEvents(); }
         [JSExport] public static string Status() { return StatusJson(); }
+        [JSExport] public static string PlanLaddersJson() { return PlanLadders(); }
         [JSExport] public static void RearmDoorsNow() { RearmDoors(); }
         [JSExport] public static string SetCheckedJson(string json) { return SetChecked(json); }
         [JSExport] public static string SetCheckLookJson(string json) { return SetCheckLook(json); }
