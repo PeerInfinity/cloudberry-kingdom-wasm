@@ -182,7 +182,8 @@ namespace CloudberryKingdom
         static int StatCrossed, StatFellBack, StatRehearsals;
         static readonly List<string> LadderLog = new List<string>();
 
-        static string AbilityKey() { return (JetpackHeld ? "J" : "") + (DoubleJumpHeld ? "D" : ""); }
+        /// <summary>The held ability that changes this level's hero (a level has at most one: R21); "" on a plain level.</summary>
+        static string AbilityKey() { return (LevelHeroJetpack && JetpackHeld ? "J" : "") + (LevelHeroJumps > 1 && DoubleJumpHeld ? "D" : ""); }
 
         /// <summary>The first tick at which piece k+1's recording stands (it starts at the spawn point, in the air, and
         /// falls onto the piece's start); its position is the crossing's target.</summary>
@@ -479,7 +480,7 @@ namespace CloudberryKingdom
 
         /// <summary>
         /// Plans every ladder of the played level at configure (the page calls it after the items), so no plan is made
-        /// mid-play: for the held abilities, and on a Jetpack / Double Jump level also for the other state of that ability
+        /// mid-play, with every platform item held: for the held abilities, and on a Jetpack / Double Jump level also for the other state of that ability
         /// (an item arriving later finds its plan made). The level is left as Play left it (reset at the start).
         /// Returns {ok, ladders, plans, crossable, ms}.
         /// </summary>
@@ -494,6 +495,9 @@ namespace CloudberryKingdom
                 if (LadderMode == "cross" && ladders > 0)
                 {
                     bool holdJ = JetpackHeld, holdD = DoubleJumpHeld;
+                    // Every platform item held: the bob reaches piece k's end only on its recording, which needs the
+                    // piece's items (S_k); the host's items at configure are often not all in yet.
+                    PlatformSuppression.Disable();
                     var states = new List<bool[]> { new[] { holdJ, holdD } };
                     if (LevelHeroJetpack) states.Add(new[] { !holdJ, holdD });
                     if (LevelHeroJumps > 1) states.Add(new[] { holdJ, !holdD });
