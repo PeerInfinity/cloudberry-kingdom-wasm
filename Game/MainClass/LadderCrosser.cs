@@ -66,6 +66,8 @@ namespace CloudberryKingdom
         public const int LadderDefaultBudget = 144, LadderDefaultKeep = 3;
         /// <summary>The rehearsal's tries stop after this many level steps.</summary>
         public const int LadderStepBudget = 6000;
+        /// <summary>options.ladderSteps: the step budgets multiplied (Phase A headroom measurement).</summary>
+        static float LadderStepScale = 1;
         /// <summary>At most this many planned crossings are validated (each one a replay of piece k and the live walk).</summary>
         public const int LadderValidations = 3;
         /// <summary>Exact tries (no rest at the recording's end) stop after this many level steps.</summary>
@@ -552,7 +554,7 @@ namespace CloudberryKingdom
         static void RestTries(Level level, Bob b, LadderPlan plan)
         {
             int start = plan.Steps;
-            for (int i = 0; i < LadderPolicies.Length && i < LadderBudget && plan.Crossings.Count < LadderKeep && plan.Steps - start < LadderStepBudget; i++)
+            for (int i = 0; i < LadderPolicies.Length && i < LadderBudget && plan.Crossings.Count < LadderKeep && plan.Steps - start < LadderStepBudget * LadderStepScale; i++)
             {
                 ZeroInput(b);
                 // Wait (no input) for a start: a carried bob needs its emitter's next platform in range.
@@ -578,7 +580,7 @@ namespace CloudberryKingdom
         static void ExactTries(Level level, int k, LadderPlan plan)
         {
             int start = plan.Steps;
-            for (int i = 0; i < LadderPolicies.Length && plan.Crossings.Count < LadderKeep && plan.Steps - start < LadderExactBudget; i++)
+            for (int i = 0; i < LadderPolicies.Length && plan.Crossings.Count < LadderKeep && plan.Steps - start < LadderExactBudget * LadderStepScale; i++)
             {
                 int key = LadderExactDelays[i % LadderExactDelays.Length];
                 int rs = ReplayPieceSilently(level, k);

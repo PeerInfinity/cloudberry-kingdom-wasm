@@ -486,6 +486,7 @@ namespace CloudberryKingdom
                         if (e.TryGetProperty("ladder", out s)) { LadderMode = s.GetString() == "cross" ? "cross" : "respawn"; LadderPlans.Clear(); }
                         if (e.TryGetProperty("ladderBudget", out s)) { LadderBudget = Math.Max(1, s.GetInt32()); LadderPlans.Clear(); }
                         if (e.TryGetProperty("ladderKeep", out s)) { LadderKeep = Math.Max(1, s.GetInt32()); LadderPlans.Clear(); }
+                        if (e.TryGetProperty("ladderSteps", out s)) { LadderStepScale = Math.Max(.1f, s.GetSingle()); LadderPlans.Clear(); }
                     }
                 }
                 if (walk.Kind == "pickup")
