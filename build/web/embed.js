@@ -74,6 +74,8 @@ const PLATFORM_ITEMS = ['MovingBlock', 'FallingBlock', 'BouncyBlock', 'GhostBloc
 const JETPACK_ITEM = 'Jetpack';
 const DOUBLE_JUMP_ITEM = 'DoubleJump';
 const PLAY_CLOCK_PERIOD_MS = 1000;
+/** After a sendExit the clock is held at the door's game seconds until the next configure, at most this long. */
+const EXIT_CLOCK_HOLD_MS = 5000;
 const PHYSICS_HZ = 60;
 
 /** The document with engine.build blanked: a redeploy that does not change generation keeps every hash. */
@@ -190,6 +192,7 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     // The level being replaced stops at once (back to the empty level): nothing more from it reaches the host, which
     // already maps names by the new region's payload.
     exports.EmbedMode.StopNow();
+    app.exitClock = null;
     const params = config?.params ?? {};
     if (params.payload !== PAYLOAD_VERSION) return refuse(`payload version ${JSON.stringify(params.payload)}, this page reads ${PAYLOAD_VERSION}`);
     if (!params.generate || typeof params.generate !== 'object') return refuse('the payload has no generate request');
@@ -247,9 +250,14 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     // The visit ends at this door: report the clock STOPPED first, with the game seconds played up to it, so the
     // host's time drain settles the whole visit now (a door taken without the menu would otherwise leave the time
     // since the last periodic report unbilled — up to PLAY_CLOCK_PERIOD_MS of every visit).
+    // The clock then STAYS stopped at that value until the host moves (the next configure; EXIT_CLOCK_HOLD_MS at most,
+    // in case it never does): the page keeps stepping while the host moves, and a periodic report from that gap would
+    // bill a second the visit did not play (P7b: measured as an 11th second charged for a 10.77 s visit).
     if (app.playResult?.ok) {
       app.exitClockSettles = (app.exitClockSettles ?? 0) + 1;
-      call('setPlayClock', false, { gameSeconds: (exports.BrowserMainLoop.PhysicsCount() - app.physics0) / PHYSICS_HZ });
+      const gameSeconds = (exports.BrowserMainLoop.PhysicsCount() - app.physics0) / PHYSICS_HZ;
+      app.exitClock = { gameSeconds, until: performance.now() + EXIT_CLOCK_HOLD_MS };
+      call('setPlayClock', false, { gameSeconds });
     }
     call('sendExit', exitName, side);
   }
@@ -351,6 +359,12 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
   }
 
   function playClock() {
+    if (app.exitClock && performance.now() < app.exitClock.until) {
+      app.clockRunning = false;
+      call('setPlayClock', false, { gameSeconds: app.exitClock.gameSeconds });
+      return;
+    }
+    app.exitClock = null;
     const running = !!app.playResult?.ok && !document.hidden && app.paused.size === 0;
     const gameSeconds = app.playResult?.ok ? (exports.BrowserMainLoop.PhysicsCount() - app.physics0) / PHYSICS_HZ : 0;
     app.clockRunning = running;
