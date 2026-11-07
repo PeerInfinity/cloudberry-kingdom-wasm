@@ -234,6 +234,10 @@ export function start({ exports, generateText, ready, setPaused = () => {} }) {
     app.sent = [];
     app.configures++;
     app.physics0 = exports.BrowserMainLoop.PhysicsCount();
+    // The clock's first report for this region goes NOW, not on the next 1 s tick: until the host has a report for the
+    // region its time drain fails safe to charging a wall second, so a drain tick landing before the first periodic
+    // report billed one second more than the visit played (P7b: measured, the host's first charge 16 ms before it).
+    playClock();
     applyItems();
     show(`region ${config.regionId ?? '?'} — ${result.pieces} pieces, ${checks.length} checks, ${result.coins} coins`);
     if (app.pendingBot) { const p = app.pendingBot; app.pendingBot = null; botWalkTo(p.goal, p.options); }
