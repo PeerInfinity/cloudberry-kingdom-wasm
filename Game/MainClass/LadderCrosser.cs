@@ -93,14 +93,29 @@ namespace CloudberryKingdom
             public bool Pause;
             public float Lo, Hi, MinRight, M;
             public int HoldC, DutyC, HoldT, DutyT;
+            public bool Climb;          // P8 C: an aim policy that hops LEFT from the right column up to the rising left column
+            public bool Fly; public float Margin; public int Pulse;   // P8 F: thrust / re-jump toward the target
             public override string ToString()
             {
-                return Aim ? "aim " + Lo + ".." + Hi + " h" + HoldC + "d" + DutyC + " r" + MinRight + " t" + M + " h" + HoldT + "d" + DutyT
-                           : "timer " + Wait + "/" + Hold + "/" + (Pause ? "p" : "-") + "/" + AirDuty;
+                if (Fly) return "fly m" + Margin + " p" + Pulse;
+                return (Climb ? "climb " : "") + (Aim ? "aim " + Lo + ".." + Hi + " h" + HoldC + "d" + DutyC + " r" + MinRight + " t" + M + " h" + HoldT + "d" + DutyT
+                           : "timer " + Wait + "/" + Hold + "/" + (Pause ? "p" : "-") + "/" + AirDuty);
             }
         }
 
+        static int LadderBaseCount, LadderFlyStart;
         static readonly LadderPolicy[] LadderPolicies = MakeLadderPolicies();
+
+        /// <summary>P8: the policy order for this plan (without flags: the base order).</summary>
+        static List<int> PolicyOrder(LadderPlan plan, bool extra)
+        {
+            if (!extra) return Enumerable.Range(0, LadderBaseCount).ToList();
+            var order = new List<int>();
+            if (Fix('F') && ((LevelHeroJetpack && JetpackHeld) || (LevelHeroJumps > 1 && DoubleJumpHeld))) order.AddRange(Enumerable.Range(LadderFlyStart, LadderPolicies.Length - LadderFlyStart));
+            if (Fix('C')) order.AddRange(Enumerable.Range(LadderBaseCount, Math.Min(40, LadderFlyStart - LadderBaseCount)));
+            if (Fix('T')) order.AddRange(Enumerable.Range(0, Math.Min(LadderBaseCount, 60)));
+            return order;
+        }
 
         static LadderPolicy[] MakeLadderPolicies()
         {
@@ -124,7 +139,23 @@ namespace CloudberryKingdom
             // A fixed shuffle (seeded) of each family, so that a small budget already samples every kind; the timer family
             // (P5b's 144) after the aim family's.
             var rng = new Random(7);
-            return aim.OrderBy(x => rng.Next()).Concat(timer.OrderBy(x => rng.Next())).ToArray();
+            var all = aim.OrderBy(x => rng.Next()).Concat(timer.OrderBy(x => rng.Next())).ToList();
+            LadderBaseCount = all.Count;
+            // P8 additions, appended so the base policies keep their indices.
+            var rng2 = new Random(11);
+            var climb = new List<LadderPolicy>();
+            foreach (var win in windows)
+                foreach (int hc in new[] { 8, 20 })
+                    foreach (float mr in new[] { 0f, 100 })
+                        foreach (int ht in new[] { 20, 40 })
+                            foreach (float m in new[] { -100f, 200 })
+                                climb.Add(new LadderPolicy { Aim = true, Climb = true, Lo = win[0], Hi = win[1], HoldC = hc, DutyC = 4, MinRight = mr, HoldT = ht, DutyT = 4, M = m });
+            all.AddRange(climb.OrderBy(x => rng2.Next()));
+            LadderFlyStart = all.Count;
+            foreach (float m in new[] { 50f, 150, 300, 500 })
+                foreach (int p in new[] { 0, 8, 16 })
+                    all.Add(new LadderPolicy { Fly = true, Margin = m, Pulse = p });
+            return all.ToArray();
         }
 
         /// <summary>One try: launched at Key (see LadderPlan), with policy Policy; Steps from the launch to its end.</summary>
@@ -144,6 +175,7 @@ namespace CloudberryKingdom
             public BlockEmitter Emitter;   // null: a static support
             public Vector2 EmitterPos;     // the emitter's identity (a reset makes the level's objects anew)
             public bool Across;            // the recording already ends across the ladder: only the walk to the target
+            public bool NoThrust;          // P8 K: validated with the no-thrust settle
             public bool Exact;             // tries from the recording's end (no rest): Key = steps after it
             public float LeftX = float.NaN, RightX = float.NaN;  // the ladder's two emitter columns (x)
             public Vector2 Offset;         // carried: the bob's position relative to its platform at rest
@@ -173,7 +205,12 @@ namespace CloudberryKingdom
 
         /// <summary>'cross' (P7c, the default) or 'respawn' (P7b: the respawn at checkpoint k+1 and its note; options.ladder).</summary>
         static string LadderMode = "cross";
-        static int LadderBudget = LadderDefaultBudget, LadderKeep = LadderDefaultKeep;
+        /// <summary>P8 PROTOTYPE (not for shipping): CK_LADDER_FIX letters — B bounce counts as standing, C climb hops, F fly/air
+        /// policies, T take over before the recording's end, R re-sync window = the whole recording, J no jetpack thrust in the
+        /// settle, V keep and validate more crossings.</summary>
+        static readonly string LadderFix = Environment.GetEnvironmentVariable("CK_LADDER_FIX") ?? "";
+        static bool Fix(char c) { return LadderFix.IndexOf(c) >= 0; }
+        static int LadderBudget = LadderDefaultBudget, LadderKeep = Environment.GetEnvironmentVariable("CK_LADDER_FIX")?.IndexOf('V') >= 0 ? 2 * LadderDefaultKeep : LadderDefaultKeep;
         /// <summary>Plans by "piece:abilities" (PlanLadders at configure; a missing one is made when the ladder is reached).</summary>
         static readonly Dictionary<string, LadderPlan> LadderPlans = new Dictionary<string, LadderPlan>();
         static double LadderPlanMs;
@@ -214,6 +251,7 @@ namespace CloudberryKingdom
 
         static Action<int> PolicyControl(Level level, Bob b, LadderPlan plan, LadderPolicy pol)
         {
+            if (pol.Fly) return FlyControl(level, b, plan, pol);
             if (pol.Aim) return AimControl(level, b, plan, pol);
             int ground = 0, holdLeft = 0, air = 0;
             return count =>
@@ -259,9 +297,27 @@ namespace CloudberryKingdom
             return best;
         }
 
+        /// <summary>P8 F: right, thrust (Jetpack) or re-jump (Double) while below the target + Margin; let go over the target.</summary>
+        static Action<int> FlyControl(Level level, Bob b, LadderPlan plan, LadderPolicy pol)
+        {
+            int pulse = 0, rest = 0;
+            return count =>
+            {
+                Vector2 p = b.Core.Data.Position;
+                bool past = p.X >= plan.Target.X - 30;
+                b.CurInput.xVec = new Vector2(past ? 0 : 1, 0);
+                bool want = !past && p.Y < plan.Target.Y + pol.Margin && b.Core.Data.Velocity.Y < 6;
+                if (pol.Pulse == 0) { b.CurInput.A_Button = want; return; }
+                if (pulse > 0) { pulse--; b.CurInput.A_Button = true; if (pulse == 0) rest = 2; return; }
+                if (rest > 0) { rest--; b.CurInput.A_Button = false; return; }
+                b.CurInput.A_Button = false;
+                if (want && (b.MyPhsx.OnGround || b.Core.Data.Velocity.Y <= 0)) { pulse = pol.Pulse; b.CurInput.A_Button = true; }
+            };
+        }
+
         static Action<int> AimControl(Level level, Bob b, LadderPlan plan, LadderPolicy pol)
         {
-            int holdLeft = 0, air = 0, duty = 4, hop = -1;
+            int holdLeft = 0, air = 0, duty = 4, hop = -1, dir = 1;
             return count =>
             {
                 bool on = b.MyPhsx.OnGround;
@@ -273,19 +329,31 @@ namespace CloudberryKingdom
                     // The jump in progress: hold it, right.
                     holdLeft--;
                     b.CurInput.A_Button = true;
-                    b.CurInput.xVec = new Vector2(1, 0);
+                    b.CurInput.xVec = new Vector2(dir, 0);
                     return;
                 }
                 if (!on)
                 {
-                    if (hop >= 0) b.CurInput.xVec = new Vector2((air % 4) < duty ? 1 : 0, 0);
+                    if (hop >= 0) b.CurInput.xVec = new Vector2((air % 4) < duty ? dir : 0, 0);
                     return;
                 }
                 hop = -1;
                 int col = ColumnOf(b, plan);
                 float y = b.Core.Data.Position.Y;
                 bool go = false;
-                if (col == 0 || col == 1)
+                dir = 1;
+                if (Fix('T') && (col == 0 || col == -1) && b.Core.Data.Position.X < plan.LeftX - 170)
+                {
+                    // P8 T: an early take-over stands short of the ladder: walk to it.
+                    b.CurInput.xVec = new Vector2(1, 0);
+                    return;
+                }
+                if (pol.Climb && col == 2 && y < plan.Target.Y - 150)
+                {
+                    go = !float.IsNaN(PlatformInWindow(level, b, plan.LeftX, pol.Lo, pol.Hi));
+                    if (go) { holdLeft = pol.HoldC; duty = pol.DutyC; dir = -1; }
+                }
+                else if (col == 0 || col == 1)
                 {
                     float colX = col == 0 ? plan.LeftX : plan.RightX;
                     bool high = col == 0 || y >= plan.Target.Y + pol.MinRight;
@@ -304,7 +372,7 @@ namespace CloudberryKingdom
                     holdLeft = Math.Max(1, holdLeft);
                     holdLeft--;
                     b.CurInput.A_Button = true;
-                    b.CurInput.xVec = new Vector2(1, 0);
+                    b.CurInput.xVec = new Vector2(dir, 0);
                 }
             };
         }
@@ -333,7 +401,10 @@ namespace CloudberryKingdom
 
         /// <summary>The level reset at piece k's checkpoint and its recording replayed to its end (the ride's own start):
         /// returns the steps taken, or -1 when the replay died.</summary>
-        static int ReplayPieceSilently(Level level, int k)
+        static int ReplayPieceSilently(Level level, int k) { return ReplayPieceSilently(level, k, 0); }
+
+        /// <summary>stopBefore &gt; 0 (P8 T): stops that many ticks before the recording's end.</summary>
+        static int ReplayPieceSilently(Level level, int k, int stopBefore)
         {
             ReleaseBobs(level);
             level.SetCurrentPiece(k);
@@ -348,7 +419,7 @@ namespace CloudberryKingdom
             Level.ReplayDeaths = 0;
             Level.ReplaySnapDisabled = Riding == null || !Riding.Snap;
             int steps = 0;
-            while (RecTick(level) < level.CurPiece.PieceLength && steps < level.CurPiece.PieceLength + 10)
+            while (RecTick(level) < level.CurPiece.PieceLength - stopBefore && steps < level.CurPiece.PieceLength + 10)
             {
                 RehearsalStep(level);
                 steps++;
@@ -369,7 +440,7 @@ namespace CloudberryKingdom
             b.ControlFunc = count =>
             {
                 landed |= b.MyPhsx.OnGround;
-                b.CurInput.A_Button = !landed;
+                b.CurInput.A_Button = !landed && !((Fix('J') || SettleNoThrust) && LevelHeroJetpack && JetpackHeld);
                 b.CurInput.xVec = landed ? Vector2.Zero : new Vector2(1, 0);
             };
         }
@@ -540,7 +611,26 @@ namespace CloudberryKingdom
             }
         }
 
+        /// <summary>P8 K: the settle after the recording's end without jetpack thrust (a second rehearsal, only when the first found no plan).</summary>
+        static bool SettleNoThrust;
+
         static LadderPlan Rehearse(Level level, int k, bool restore)
+        {
+            LadderPlan plan = RehearseOnce(level, k, restore);
+            if (plan.Validated == null && Fix('K') && LevelHeroJetpack && JetpackHeld)
+            {
+                SettleNoThrust = true;
+                try
+                {
+                    LadderPlan p2 = RehearseOnce(level, k, restore);
+                    if (p2.Validated != null) { p2.NoThrust = true; p2.Ms += plan.Ms; return p2; }
+                }
+                finally { SettleNoThrust = false; }
+            }
+            return plan;
+        }
+
+        static LadderPlan RehearseOnce(Level level, int k, bool restore)
         {
             var sw = Stopwatch.StartNew();
             var plan = new LadderPlan { Piece = k, Target = LadderTarget(level, k), TargetTick = LadderTargetTick(level, k), Abilities = AbilityKey() };
@@ -598,6 +688,8 @@ namespace CloudberryKingdom
                     plan.Exact = true;
                     plan.Emitter = null;
                     ExactTries(level, k, plan);
+                    // P8: a second pass, only when the base family found nothing (so nothing it found is lost).
+                    if (plan.Crossings.Count == 0 && (Fix('C') || Fix('F') || Fix('T'))) ExactTries(level, k, plan, true);
                 }
                 if (plan.Crossings.Count == 0) { plan.Refusal = "no policy crossed in " + plan.Tries.Count + " tries"; return plan; }
                 plan.Steps += ValidateCrossings(level, k, plan);
@@ -635,8 +727,11 @@ namespace CloudberryKingdom
         static void RestTries(Level level, Bob b, LadderPlan plan)
         {
             int start = plan.Steps;
-            for (int i = 0; i < LadderPolicies.Length && i < LadderBudget && plan.Crossings.Count < LadderKeep && plan.Steps - start < LadderStepBudget * LadderStepScale; i++)
+            var order = PolicyOrder(plan, false);
+            int budget = LadderBudget;
+            for (int idx = 0; idx < order.Count && idx < budget && plan.Crossings.Count < LadderKeep && plan.Steps - start < LadderStepBudget * LadderStepScale; idx++)
             {
+                int i = order[idx];
                 ZeroInput(b);
                 // Wait (no input) for a start: a carried bob needs its emitter's next platform in range.
                 int guard = 0;
@@ -658,17 +753,20 @@ namespace CloudberryKingdom
 
         /// <summary>Exact tries: for each policy and launch delay, piece k replayed from its checkpoint, the settle
         /// controller for Key steps, then the policy.</summary>
-        static void ExactTries(Level level, int k, LadderPlan plan)
+        static void ExactTries(Level level, int k, LadderPlan plan, bool extra = false)
         {
             int start = plan.Steps;
-            for (int i = 0; i < LadderPolicies.Length && plan.Crossings.Count < LadderKeep && plan.Steps - start < LadderExactBudget * LadderStepScale; i++)
+            var order = PolicyOrder(plan, extra);
+            int[] delays = extra && Fix('T') ? new[] { -30, 1, -60, 8, -100, 20, -15, 40 } : LadderExactDelays;
+            for (int idx = 0; idx < order.Count && plan.Crossings.Count < LadderKeep && plan.Steps - start < LadderExactBudget * LadderStepScale; idx++)
             {
-                int key = LadderExactDelays[i % LadderExactDelays.Length];
-                int rs = ReplayPieceSilently(level, k);
+                int i = order[idx];
+                int key = delays[idx % delays.Length];
+                int rs = ReplayPieceSilently(level, k, Math.Max(0, -key));
                 plan.Steps += Math.Max(0, rs);
-                if (rs < 0) return;
+                if (rs < 0) { if (key < 0) continue; return; }
                 Bob b = level.Bobs[0];
-                SettleControl(level, b, k);
+                if (key >= 0) SettleControl(level, b, k); else { b.CompControl = false; b.MyRecord = null; b.CodeControl = true; }
                 Level.ReplayCodeProbe = true;
                 for (int s = 0; s < key && Level.ReplayDeaths == 0; s++) { RehearsalStep(level); plan.Steps++; }
                 var t = new LadderTry { Policy = i, Key = key };
@@ -701,6 +799,7 @@ namespace CloudberryKingdom
 
         /// <summary>null while the walk goes on; "crossed", "died", "fell" or "overshot" (riding a column far above the
         /// target). Crossed = standing on a block (not a ladder platform) past the left column, level with the target.</summary>
+        static float WalkPrevVy;
         static string WalkOutcome(Bob b, LadderPlan plan, float floor, ref int stand)
         {
             if (Level.ReplayDeaths > 0 || b.Dying || b.Dead) return "died";
@@ -709,7 +808,10 @@ namespace CloudberryKingdom
             if (p.Y > Math.Max(plan.Pose.Y, plan.Target.Y) + LadderOvershoot && b.MyPhsx.OnGround && b.MyPhsx.ObjectLandedOn is MovingPlatform && ((MovingPlatform)b.MyPhsx.ObjectLandedOn).BlockCore.Data.Velocity.Y > 0) return "overshot";
             bool there = b.MyPhsx.OnGround && !(b.MyPhsx.ObjectLandedOn is MovingPlatform)
                          && p.X >= plan.LeftX + LadderPastLeft && Math.Abs(p.Y - plan.Target.Y) < LadderReachY;
-            stand = there ? stand + 1 : 0;
+            float vy = b.Core.Data.Velocity.Y;
+            bool bounced = Fix('B') && WalkPrevVy < -1 && vy > 5 && b.MyPhsx.ObjectLandedOn is BouncyBlock && p.X >= plan.LeftX + LadderPastLeft && Math.Abs(p.Y - plan.Target.Y) < LadderReachY;
+            WalkPrevVy = vy;
+            stand = bounced ? LadderStandTicks : there ? stand + 1 : 0;
             return stand >= LadderStandTicks ? "crossed" : null;
         }
 
@@ -738,14 +840,23 @@ namespace CloudberryKingdom
             // wait for a planned phase at the pose.
             ReleaseBobs(level);
             Bob b = level.Bobs[0];
+            SettleNoThrust = plan.NoThrust;
             SettleControl(level, b, from);
             Level.ReplayProbe = true;
             Level.ReplayCodeProbe = true;
             Level.ReplayDeaths = 0;
-            Cross = new Crossing { Stage = CrossStage.Settle, Plan = plan };
+            Cross = new Crossing { Stage = CrossStage.Settle, Plan = plan, Chosen = plan.Exact ? plan.Validated : null };
             r.State = RideState.Crossing;
             Events.Add("{\"kind\":\"botNote\",\"note\":\"ladderWalk\",\"piece\":" + from + ",\"fromPiece\":" + from + ",\"toPiece\":" + to
                        + ",\"goal\":" + GoalJson() + ",\"text\":" + GeneratorApi.JsonStr("ladder: walking across to " + CheckpointName(to)) + "}");
+        }
+
+        /// <summary>P8 T: the ticks before the recording's end at which the live ride should take over for ladder k (0: at the end).</summary>
+        static int LadderTakeover(int k)
+        {
+            LadderPlan plan;
+            if (!Fix('T') || LadderMode != "cross" || !LadderPlans.TryGetValue(PlanKey(k), out plan) || plan.Refusal != null || !plan.Exact || plan.Validated == null) return 0;
+            return Math.Max(0, -plan.Validated.Key);
         }
 
         static string CheckpointName(int piece) { return piece <= 0 ? "the start" : "checkpoint " + piece; }
@@ -913,7 +1024,7 @@ namespace CloudberryKingdom
             c.StageSteps = 0;
             LevelPiece next = level.LevelPieces[plan.Piece + 1];
             ComputerRecording rec = next.Recording[0];
-            int n = Math.Min(Math.Min(next.PieceLength, rec.AutoOnGround.Length), plan.TargetTick + LadderResyncTicks);
+            int n = Math.Min(Math.Min(next.PieceLength, rec.AutoOnGround.Length), Fix('R') ? int.MaxValue : plan.TargetTick + LadderResyncTicks);
             c.ResyncTick = plan.TargetTick;
             float best = float.MaxValue;
             for (int i = plan.TargetTick; i < n; i++)
@@ -938,7 +1049,7 @@ namespace CloudberryKingdom
         {
             LevelPiece next = level.LevelPieces[plan.Piece + 1];
             ComputerRecording rec = next.Recording[0];
-            int n = Math.Min(Math.Min(next.PieceLength, rec.AutoOnGround.Length), plan.TargetTick + LadderResyncTicks);
+            int n = Math.Min(Math.Min(next.PieceLength, rec.AutoOnGround.Length), Fix('R') ? int.MaxValue : plan.TargetTick + LadderResyncTicks);
             Vector2 p = b.Core.Data.Position;
             for (int i = plan.TargetTick; i < n; i++)
             {
@@ -967,16 +1078,19 @@ namespace CloudberryKingdom
         static int ValidateCrossings(Level level, int k, LadderPlan plan)
         {
             int steps = 0;
-            for (int attempt = 0; attempt < LadderValidations && plan.Crossings.Any(t => !t.Invalid); attempt++)
+            int vcount = Fix('V') ? LadderValidations * 2 : LadderValidations;
+            for (int attempt = 0; attempt < vcount && plan.Crossings.Any(t => !t.Invalid); attempt++)
             {
-                int rs = ReplayPieceSilently(level, k);
-                if (rs < 0) break;
+                LadderTry pre = plan.Exact ? plan.Crossings.Where(t => !t.Invalid).OrderBy(t => t.Key + t.Steps).FirstOrDefault() : null;
+                int rs = ReplayPieceSilently(level, k, pre != null ? Math.Max(0, -pre.Key) : 0);
+                if (rs < 0) { if (pre != null) { pre.Invalid = true; continue; } break; }
                 steps += rs;
                 Bob b = level.Bobs[0];
                 SettleControl(level, b, k);
                 Level.ReplayCodeProbe = true;
                 Level.ReplayDeaths = 0;
-                var c = new Crossing { Stage = CrossStage.Settle, Plan = plan };
+                var c = new Crossing { Stage = CrossStage.Settle, Plan = plan, Chosen = pre };
+                if (pre != null && pre.Key < 0) { b.CompControl = false; b.MyRecord = null; b.CodeControl = true; }
                 string res = null;
                 for (int s = 0; s < LadderSettleMax + 2 * LadderPeriod + LadderTryMax + LadderArriveMax + 20 && res == null; s++)
                 {

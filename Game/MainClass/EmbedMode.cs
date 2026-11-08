@@ -854,6 +854,7 @@ namespace CloudberryKingdom
                     int rec = RecTick(level);
                     if (Level.ReplayDeaths > 0) { OnFailure(level, r, walk, "died", Level.ReplayFirstDeathTick); return; }
                     if (walk != null && walk.Kind == "pickup" && r.Piece == walk.Piece && rec > walk.Tick + BotSlackTicks) { OnFailure(level, r, walk, "missed", rec); return; }
+                    if (walk != null && walk.Piece > r.Piece && LadderTakeover(r.Piece) > 0 && rec >= level.CurPiece.PieceLength - LadderTakeover(r.Piece)) { Ladder(level, r); return; }
                     if (rec < level.CurPiece.PieceLength) return;
                     // The recording is over.
                     if (walk != null && walk.Piece > r.Piece) Ladder(level, r);
