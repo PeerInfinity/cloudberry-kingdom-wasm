@@ -8,6 +8,7 @@ using Microsoft.Xna.Framework;
 using CloudberryKingdom.Bobs;
 using CloudberryKingdom.Levels;
 using CloudberryKingdom.Blocks;
+using CloudberryKingdom.InGameObjects;
 using CoreEngine;
 
 namespace CloudberryKingdom
@@ -60,18 +61,16 @@ namespace CloudberryKingdom
         /// <summary>After crossing, the bob walks to the recording's start (within LadderArrive px) for at most LadderArriveMax steps.</summary>
         public const float LadderArrive = 12;
         public const int LadderArriveMax = 90;
-        /// <summary>The re-sync picks the recording's nearest standing tick among its first this many after TargetTick.</summary>
-        public const int LadderResyncTicks = 120;
         /// <summary>⚖ Robert 2026-11-07: a re-sync that would move the bob more than this falls back to the respawn + note.</summary>
         public const float LadderResyncCap = 150;
         /// <summary>Default rehearsal budget: at most this many tries; stop once this many have crossed.</summary>
-        public const int LadderDefaultBudget = 144, LadderDefaultKeep = 3;
+        public const int LadderDefaultBudget = 144, LadderDefaultKeep = 6;
         /// <summary>The rehearsal's tries stop after this many level steps.</summary>
         public const int LadderStepBudget = 6000;
         /// <summary>options.ladderSteps: the step budgets multiplied (Phase A headroom measurement).</summary>
         static float LadderStepScale = 1;
         /// <summary>At most this many planned crossings are validated (each one a replay of piece k and the live walk).</summary>
-        public const int LadderValidations = 3;
+        public const int LadderValidations = 6;
         /// <summary>Exact tries (no rest at the recording's end) stop after this many level steps.</summary>
         public const int LadderExactBudget = 8000;
         /// <summary>Exact tries launch this many steps after the recording's end (cycled with the policies).</summary>
@@ -144,6 +143,7 @@ namespace CloudberryKingdom
             public BlockEmitter Emitter;   // null: a static support
             public Vector2 EmitterPos;     // the emitter's identity (a reset makes the level's objects anew)
             public bool Across;            // the recording already ends across the ladder: only the walk to the target
+            public bool NoThrust;          // planned with no jetpack thrust in the settle (see Rehearse)
             public bool Exact;             // tries from the recording's end (no rest): Key = steps after it
             public float LeftX = float.NaN, RightX = float.NaN;  // the ladder's two emitter columns (x)
             public Vector2 Offset;         // carried: the bob's position relative to its platform at rest
@@ -360,24 +360,24 @@ namespace CloudberryKingdom
         /// <summary>The settle controller after piece k's recording: while the bob is in the air (a recording can end
         /// mid-jump), what the engine feeds a computer bob past its recording's end (Bob.GetRecordedInput: right + jump);
         /// once it has landed, no input.</summary>
-        static void SettleControl(Level level, Bob b, int k)
+        static void SettleControl(Level level, Bob b, int k, LadderPlan plan)
         {
-            bool landed = false;
+            bool landed = false, jump = !(plan.NoThrust && LevelHeroJetpack && JetpackHeld);
             b.CompControl = false;
             b.MyRecord = null;
             b.CodeControl = true;
             b.ControlFunc = count =>
             {
                 landed |= b.MyPhsx.OnGround;
-                b.CurInput.A_Button = !landed;
+                b.CurInput.A_Button = !landed && jump;
                 b.CurInput.xVec = landed ? Vector2.Zero : new Vector2(1, 0);
             };
         }
 
         /// <summary>Settles the bob at the end of the replay; returns steps, or -1 (died / never at rest).</summary>
-        static int Settle(Level level, Bob b, int k)
+        static int Settle(Level level, Bob b, int k, LadderPlan plan)
         {
-            SettleControl(level, b, k);
+            SettleControl(level, b, k, plan);
             Level.ReplayCodeProbe = true;
             int rest = 0;
             for (int s = 1; s <= LadderSettleMax; s++)
@@ -474,6 +474,7 @@ namespace CloudberryKingdom
             if (EqualityComparer<T>.Default.Equals(field, value)) return;
             field = value;
             LadderPlans.Clear();
+            DoorPlans.Clear();
         }
 
         static string PlanKey(int k) { return k + ":" + AbilityKey(); }
@@ -492,7 +493,7 @@ namespace CloudberryKingdom
                 if (level == null || Tools.CurLevel != level) throw new InvalidOperationException("no level is being played");
                 var sw = Stopwatch.StartNew();
                 int ladders = Math.Max(0, level.LevelPieces.Count - 1), made = 0, crossable = 0;
-                if (LadderMode == "cross" && ladders > 0)
+                if (LadderMode == "cross")
                 {
                     bool holdJ = JetpackHeld, holdD = DoubleJumpHeld;
                     // Every platform item held: the bob reaches piece k's end only on its recording, which needs the
@@ -516,6 +517,8 @@ namespace CloudberryKingdom
                                 made++;
                                 if (plan.Validated != null) crossable++;
                             }
+                            string dk = AbilityKey();
+                            if (!DoorPlans.ContainsKey(dk)) DoorPlans[dk] = RehearseDoor(level);
                         }
                     }
                     finally
@@ -540,10 +543,26 @@ namespace CloudberryKingdom
             }
         }
 
+        /// <summary>
+        /// The rehearsal of ladder k. A Jetpack bob's settle holds jump in the air (the engine's own input past a recording's end),
+        /// and the thrust can carry it far past the next piece's start; so when the first rehearsal finds no plan, a Jetpack level
+        /// gets a second one with no thrust in the settle. It is a retry and not the rule because some ladders are only crossed
+        /// with the thrust.
+        /// </summary>
         static LadderPlan Rehearse(Level level, int k, bool restore)
         {
+            LadderPlan plan = RehearseOnce(level, k, restore, false);
+            if (plan.Validated != null || !(LevelHeroJetpack && JetpackHeld)) return plan;
+            LadderPlan noThrust = RehearseOnce(level, k, restore, true);
+            if (noThrust.Validated == null) return plan;
+            noThrust.Ms += plan.Ms;
+            return noThrust;
+        }
+
+        static LadderPlan RehearseOnce(Level level, int k, bool restore, bool noThrust)
+        {
             var sw = Stopwatch.StartNew();
-            var plan = new LadderPlan { Piece = k, Target = LadderTarget(level, k), TargetTick = LadderTargetTick(level, k), Abilities = AbilityKey() };
+            var plan = new LadderPlan { Piece = k, Target = LadderTarget(level, k), TargetTick = LadderTargetTick(level, k), Abilities = AbilityKey(), NoThrust = noThrust };
             bool holdSuppress = level.SuppressCheckpoints, holdSounds = CoreSoundWad.SuppressSounds;
             int holdTimeLimit = level.TimeLimit;
             CoreSoundWad.SuppressSounds = true;
@@ -561,7 +580,7 @@ namespace CloudberryKingdom
                 plan.ReplaySteps += rs;
                 plan.Steps = rs;
                 Bob b = level.Bobs[0];
-                int settle = Settle(level, b, k);
+                int settle = Settle(level, b, k, plan);
                 plan.Steps += Math.Max(0, settle);
                 Debug("replayed " + rs + ", settle " + settle + ": pos " + b.Core.Data.Position + " on " + Describe(b.MyPhsx.ObjectLandedOn) + " columns " + plan.LeftX + "/" + plan.RightX + " target " + plan.Target);
                 if (settle >= 0)
@@ -668,7 +687,7 @@ namespace CloudberryKingdom
                 plan.Steps += Math.Max(0, rs);
                 if (rs < 0) return;
                 Bob b = level.Bobs[0];
-                SettleControl(level, b, k);
+                SettleControl(level, b, k, plan);
                 Level.ReplayCodeProbe = true;
                 for (int s = 0; s < key && Level.ReplayDeaths == 0; s++) { RehearsalStep(level); plan.Steps++; }
                 var t = new LadderTry { Policy = i, Key = key };
@@ -701,16 +720,130 @@ namespace CloudberryKingdom
 
         /// <summary>null while the walk goes on; "crossed", "died", "fell" or "overshot" (riding a column far above the
         /// target). Crossed = standing on a block (not a ladder platform) past the left column, level with the target.</summary>
+        static float WalkPrevVy;
         static string WalkOutcome(Bob b, LadderPlan plan, float floor, ref int stand)
         {
             if (Level.ReplayDeaths > 0 || b.Dying || b.Dead) return "died";
             Vector2 p = b.Core.Data.Position;
             if (p.Y < floor) return "fell";
             if (p.Y > Math.Max(plan.Pose.Y, plan.Target.Y) + LadderOvershoot && b.MyPhsx.OnGround && b.MyPhsx.ObjectLandedOn is MovingPlatform && ((MovingPlatform)b.MyPhsx.ObjectLandedOn).BlockCore.Data.Velocity.Y > 0) return "overshot";
-            bool there = b.MyPhsx.OnGround && !(b.MyPhsx.ObjectLandedOn is MovingPlatform)
-                         && p.X >= plan.LeftX + LadderPastLeft && Math.Abs(p.Y - plan.Target.Y) < LadderReachY;
-            stand = there ? stand + 1 : 0;
+            bool ahead = p.X >= plan.LeftX + LadderPastLeft && Math.Abs(p.Y - plan.Target.Y) < LadderReachY;
+            bool there = b.MyPhsx.OnGround && !(b.MyPhsx.ObjectLandedOn is MovingPlatform) && ahead;
+            // A BouncyBlock throws the bob up on contact, so it never stands on one: the bounce itself counts.
+            float vy = b.Core.Data.Velocity.Y;
+            bool bounced = ahead && WalkPrevVy < -1 && vy > 5 && b.MyPhsx.ObjectLandedOn is BouncyBlock;
+            WalkPrevVy = vy;
+            stand = bounced ? LadderStandTicks : there ? stand + 1 : 0;
             return stand >= LadderStandTicks ? "crossed" : null;
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------
+        // The door: from the last recording's end to the end door
+
+        /// <summary>The door walk's rehearsal gives up on one try after this many steps, and on the whole search after DoorSearchSteps.</summary>
+        public const int DoorTryMax = 400, DoorSearchSteps = 12000;
+
+        /// <summary>A way to the door from the last recording's end when plain walking dies or sticks: jump Delay steps after landing
+        /// (Repeat: every landing, else once), holding Hold; Air: also re-press in the air (a Double Jump's or Jetpack's second press).</summary>
+        class DoorPolicy
+        {
+            public int Delay, Hold;
+            public bool Repeat, Air;
+            public override string ToString() { return "jump d" + Delay + " h" + Hold + (Repeat ? " repeat" : "") + (Air ? " air" : ""); }
+        }
+
+        class DoorPlan { public DoorPolicy Policy; public bool Reached; public int Tries, Steps; }
+
+        static readonly Dictionary<string, DoorPlan> DoorPlans = new Dictionary<string, DoorPlan>();
+
+        static List<DoorPolicy> MakeDoorPolicies()
+        {
+            var list = new List<DoorPolicy>();
+            foreach (bool repeat in new[] { false, true })
+                foreach (int d in new[] { 0, 6, 14, 30, 50 })
+                    foreach (int h in new[] { 8, 20, 40 })
+                        list.Add(new DoorPolicy { Delay = d, Hold = h, Repeat = repeat });
+            foreach (int d in new[] { 0, 14 })
+                foreach (int h in new[] { 8, 20 })
+                    list.Add(new DoorPolicy { Delay = d, Hold = h, Repeat = true, Air = true });
+            return list;
+        }
+
+        static readonly List<DoorPolicy> DoorPolicies = MakeDoorPolicies();
+
+        /// <summary>Walks to the door (the steering); with a policy, also jumps as it says. Used by the rehearsal and the live ride alike.</summary>
+        static Action<int> DoorControl(Bob b, Door door, DoorPolicy pol)
+        {
+            int ground = 0, hold = 0, rest = 0;
+            bool used = false;
+            return count =>
+            {
+                float dx = door.Pos.X - b.Core.Data.Position.X;
+                b.CurInput.xVec = new Vector2(Math.Abs(dx) < DoorSteerDeadZone ? 0 : Math.Sign(dx), 0);
+                b.CurInput.A_Button = false;
+                if (pol == null) return;
+                bool on = b.MyPhsx.OnGround;
+                ground = on ? ground + 1 : 0;
+                if (hold > 0) { hold--; b.CurInput.A_Button = true; if (hold == 0) rest = 2; return; }
+                if (rest > 0) { rest--; return; }
+                bool press = on ? ground > pol.Delay && (pol.Repeat || !used) : pol.Air && b.Core.Data.Velocity.Y <= 0;
+                if (press) { used = true; hold = pol.Hold - 1; b.CurInput.A_Button = true; }
+            };
+        }
+
+        /// <summary>The last piece's recording replayed, then one way to the door: true when the bob gets there alive.</summary>
+        static bool TryDoor(Level level, Door door, DoorPolicy pol, DoorPlan plan)
+        {
+            int rs = ReplayPieceSilently(level, level.LevelPieces.Count - 1);
+            plan.Steps += Math.Max(0, rs);
+            if (rs < 0) return false;
+            plan.Tries++;
+            ReleaseBobs(level);
+            Level.ReplayProbe = true;
+            Level.ReplayCodeProbe = true;
+            Level.ReplayDeaths = 0;
+            foreach (Bob bob in level.Bobs) { bob.CodeControl = true; bob.ControlFunc = DoorControl(bob, door, pol); }
+            for (int s = 0; s < DoorTryMax; s++)
+            {
+                RehearsalStep(level);
+                plan.Steps++;
+                if (Level.ReplayDeaths > 0 || level.Bobs.Any(b => b.Dying || b.Dead)) return false;
+                if (level.Bobs.Any(b => door.BobInReach(b))) return true;
+            }
+            return false;
+        }
+
+        /// <summary>The door walk, rehearsed at configure with the engine's own physics: plain walking first (almost always enough, one
+        /// replay), then the jump policies until one reaches the door. No policy found: the live ride walks, as before.</summary>
+        static DoorPlan RehearseDoor(Level level)
+        {
+            var plan = new DoorPlan();
+            Door door = level.FinalDoor;
+            if (door == null) return plan;
+            bool holdSuppress = level.SuppressCheckpoints, holdSounds = CoreSoundWad.SuppressSounds;
+            int holdTimeLimit = level.TimeLimit;
+            CoreSoundWad.SuppressSounds = true;
+            Rehearsing = true;
+            try
+            {
+                level.SuppressCheckpoints = true;
+                level.TimeLimit = 0;
+                if (TryDoor(level, door, null, plan)) { plan.Reached = true; return plan; }
+                foreach (DoorPolicy pol in DoorPolicies)
+                {
+                    if (plan.Steps >= DoorSearchSteps) break;
+                    if (TryDoor(level, door, pol, plan)) { plan.Policy = pol; plan.Reached = true; return plan; }
+                }
+                return plan;
+            }
+            finally
+            {
+                level.SuppressCheckpoints = holdSuppress;
+                level.TimeLimit = holdTimeLimit;
+                Level.ReplayCodeProbe = false;
+                Rehearsing = false;
+                CoreSoundWad.SuppressSounds = holdSounds;
+            }
         }
 
         // ---------------------------------------------------------------------------------------------------------------
@@ -738,7 +871,7 @@ namespace CloudberryKingdom
             // wait for a planned phase at the pose.
             ReleaseBobs(level);
             Bob b = level.Bobs[0];
-            SettleControl(level, b, from);
+            SettleControl(level, b, from, plan);
             Level.ReplayProbe = true;
             Level.ReplayCodeProbe = true;
             Level.ReplayDeaths = 0;
@@ -806,7 +939,7 @@ namespace CloudberryKingdom
             Respawned("ladder:crossed");
             float resync = level.Bobs.Count > 0 ? (level.Bobs[0].Core.Data.Position - stood).Length() : -1;
             Events.Add("{\"kind\":\"botNote\",\"note\":\"ladder\",\"piece\":" + to + ",\"fromPiece\":" + from + ",\"toPiece\":" + to
-                       + ",\"crossing\":\"crossed\",\"steps\":" + c.Steps + ",\"resync\":" + resync.ToString("0", CultureInfo.InvariantCulture)
+                       + ",\"crossing\":\"crossed\",\"steps\":" + c.Steps + ",\"resync\":" + resync.ToString("0", CultureInfo.InvariantCulture) + ",\"resyncTick\":" + c.ResyncTick
                        + ",\"goal\":" + GoalJson() + ",\"text\":" + GeneratorApi.JsonStr("ladder: walked across to " + CheckpointName(to)) + "}");
         }
 
@@ -904,8 +1037,8 @@ namespace CloudberryKingdom
             return null;
         }
 
-        /// <summary>Standing on piece k+1: walk to the nearest position at which its recording stands (within the first
-        /// LadderResyncTicks of it); the re-sync fast-forwards the recording to that tick.</summary>
+        /// <summary>Standing on piece k+1: walk to the nearest position at which its recording stands, anywhere in it; the re-sync
+        /// fast-forwards the recording to that tick.</summary>
         static void StartArrive(Level level, Bob b, Crossing c)
         {
             LadderPlan plan = c.Plan;
@@ -913,7 +1046,7 @@ namespace CloudberryKingdom
             c.StageSteps = 0;
             LevelPiece next = level.LevelPieces[plan.Piece + 1];
             ComputerRecording rec = next.Recording[0];
-            int n = Math.Min(Math.Min(next.PieceLength, rec.AutoOnGround.Length), plan.TargetTick + LadderResyncTicks);
+            int n = Math.Min(next.PieceLength, rec.AutoOnGround.Length);
             c.ResyncTick = plan.TargetTick;
             float best = float.MaxValue;
             for (int i = plan.TargetTick; i < n; i++)
@@ -933,12 +1066,12 @@ namespace CloudberryKingdom
         }
 
         /// <summary>A try that stands on piece k+1 counts only if the re-sync can stay within the cap: a standing tick of
-        /// the recording (in its window) level with the bob (walkable), or one within the cap.</summary>
+        /// the recording level with the bob (walkable), or one within the cap.</summary>
         static bool ResyncReachable(Level level, Bob b, LadderPlan plan)
         {
             LevelPiece next = level.LevelPieces[plan.Piece + 1];
             ComputerRecording rec = next.Recording[0];
-            int n = Math.Min(Math.Min(next.PieceLength, rec.AutoOnGround.Length), plan.TargetTick + LadderResyncTicks);
+            int n = Math.Min(next.PieceLength, rec.AutoOnGround.Length);
             Vector2 p = b.Core.Data.Position;
             for (int i = plan.TargetTick; i < n; i++)
             {
@@ -973,7 +1106,7 @@ namespace CloudberryKingdom
                 if (rs < 0) break;
                 steps += rs;
                 Bob b = level.Bobs[0];
-                SettleControl(level, b, k);
+                SettleControl(level, b, k, plan);
                 Level.ReplayCodeProbe = true;
                 Level.ReplayDeaths = 0;
                 var c = new Crossing { Stage = CrossStage.Settle, Plan = plan };
@@ -1005,7 +1138,7 @@ namespace CloudberryKingdom
         static string PlanJson(LadderPlan p, string when)
         {
             var sb = new StringBuilder();
-            sb.Append("{\"piece\":").Append(p.Piece).Append(",\"when\":").Append(GeneratorApi.JsonStr(when)).Append(",\"abilities\":").Append(GeneratorApi.JsonStr(p.Abilities))
+            sb.Append("{\"piece\":").Append(p.Piece).Append(",\"when\":").Append(GeneratorApi.JsonStr(when)).Append(",\"abilities\":").Append(GeneratorApi.JsonStr(p.Abilities)).Append(",\"noThrust\":").Append(p.NoThrust ? "true" : "false")
               .Append(",\"refusal\":").Append(p.Refusal == null ? "null" : GeneratorApi.JsonStr(p.Refusal))
               .Append(",\"pose\":").Append(Vec(p.Pose)).Append(",\"target\":").Append(Vec(p.Target))
               .Append(",\"support\":").Append(p.Exact ? "\"exact\"" : p.Across ? "\"across\"" : p.Emitter == null ? "\"static\"" : "\"carried\"")
@@ -1042,13 +1175,15 @@ namespace CloudberryKingdom
               .Append(",\"fellBack\":").Append(StatFellBack).Append(",\"rehearsals\":").Append(StatRehearsals)
               .Append(",\"planMs\":").Append(LadderPlanMs.ToString("0.0", CultureInfo.InvariantCulture))
               .Append(",\"stage\":").Append(Cross == null ? "null" : GeneratorApi.JsonStr(Cross.Stage.ToString()))
-              .Append(",\"plans\":[").Append(string.Join(",", LadderLog)).Append("]}");
+              .Append(",\"plans\":[").Append(string.Join(",", LadderLog)).Append("]")
+              .Append(",\"door\":[").Append(string.Join(",", DoorPlans.Select(kv => "{\"abilities\":" + GeneratorApi.JsonStr(kv.Key) + ",\"policy\":" + GeneratorApi.JsonStr(kv.Value.Policy == null ? (kv.Value.Reached ? "walk" : "none") : kv.Value.Policy.ToString()) + ",\"tries\":" + kv.Value.Tries + ",\"steps\":" + kv.Value.Steps + "}"))).Append("]}");
             return sb.ToString();
         }
 
         static void ResetLadders()
         {
             LadderPlans.Clear();
+            DoorPlans.Clear();
             LadderLog.Clear();
             LadderPlanMs = 0;
             Cross = null;

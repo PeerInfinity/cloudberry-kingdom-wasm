@@ -660,15 +660,13 @@ namespace CloudberryKingdom
             // computer "right + jump", which can carry the bob over a low door; walk to the door instead.
             ReleaseBobs(level);
             r.State = RideState.Steering;
+            // The way planned at configure (P8): plain walking unless the rehearsal found it dies or sticks.
+            DoorPlan plan;
+            DoorPolicy pol = DoorPlans.TryGetValue(AbilityKey(), out plan) ? plan.Policy : null;
             foreach (Bob bob in level.Bobs)
             {
-                Bob b = bob;
-                b.CodeControl = true;
-                b.ControlFunc = count =>
-                {
-                    float dx = door.Pos.X - b.Core.Data.Position.X;
-                    b.CurInput.xVec = new Vector2(Math.Abs(dx) < DoorSteerDeadZone ? 0 : Math.Sign(dx), 0);
-                };
+                bob.CodeControl = true;
+                bob.ControlFunc = DoorControl(bob, door, pol);
             }
         }
 
